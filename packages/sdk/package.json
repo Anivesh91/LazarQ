@@ -12,7 +12,8 @@
   "dependencies": {
     "bullmq": "^5.52.0",
     "ioredis": "^5.6.1",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
