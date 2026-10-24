@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "AI-Assisted Queue Failure Recovery Platform",
+  "packageManager": "pnpm@12.15.0",
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
