@@ -1,0 +1,25 @@
+{
+  "name": "@dlq-healer/playground",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/producer.ts",
+    "worker": "tsx watch src/workers/order.worker.ts",
+    "seed": "tsx src/seed-jobs.ts",
+    "build": "tsc",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "bullmq": "^5.52.0",
+    "ioredis": "^5.6.1",
+    "zod": "^3.25.0",
+    "dotenv": "^16.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.15.0",
+    "@types/express": "^5.0.2",
+    "tsx": "^4.19.0"
+  }
+}

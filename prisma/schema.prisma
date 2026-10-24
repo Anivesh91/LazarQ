@@ -1,0 +1,107 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+enum IncidentStatus {
+  INGESTED
+  ANALYZING
+  RAG_MATCHED
+  PROPOSAL_READY
+  AWAITING_APPROVAL
+  REPLAY_QUEUED
+  REPLAYING
+  RESOLVED
+  QUARANTINED
+  SANDBOX_FAILED
+  REPLAY_FAILED
+  ANALYSIS_FAILED
+}
+
+enum RecoveryStatus {
+  PENDING
+  QUEUED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+model Incident {
+  id                 String           @id @default(uuid())
+  sourceId           String           @default("sdk-v1")
+  queueName          String
+  jobId              String
+  jobName            String
+  payloadSnapshot    Json
+  expectedJsonSchema Json?
+  errorMessage       String
+  stackTrace         String?
+  attemptsMade       Int
+  configuredAttempts Int
+  status             IncidentStatus   @default(INGESTED)
+  idempotencyKey     String           @unique
+  fingerprint        String?
+  matchedRunbookId   String?
+  matchedRunbook     Runbook?         @relation(fields: [matchedRunbookId], references: [id])
+  aiDiagnosis        Json?
+  proposedPayload    Json?
+  validationResult   Json?
+  occurredAt         DateTime         @default(now())
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  recoveryAttempts   RecoveryAttempt[]
+  auditLogs          AuditLog[]
+
+  @@unique([queueName, jobId, attemptsMade])
+  @@index([status])
+  @@index([queueName])
+  @@index([fingerprint])
+}
+
+model Runbook {
+  id        String   @id @default(uuid())
+  title     String
+  content   String   @db.Text
+  embedding Unsupported("vector(1536)")?
+  tags      String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  incidents Incident[]
+}
+
+model RecoveryAttempt {
+  id               String         @id @default(uuid())
+  incidentId       String
+  incident         Incident       @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  proposedPayload  Json
+  validationResult Json?
+  replayJobId      String?
+  status           RecoveryStatus @default(PENDING)
+  failureReason    String?
+  startedAt        DateTime       @default(now())
+  completedAt      DateTime?
+
+  @@index([incidentId])
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  action     String
+  actor      String   @default("system")
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId])
+  @@index([action])
+}
