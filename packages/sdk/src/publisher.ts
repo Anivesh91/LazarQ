@@ -19,6 +19,8 @@ export class SmartDLQPublisher {
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
       });
+      // Attach silent error listener to prevent uncaught "Connection is closed" errors during teardown
+      this.redisClient.on("error", () => {});
       connection = this.redisClient;
       this.ownConnection = true;
     }
@@ -48,7 +50,6 @@ export class SmartDLQPublisher {
       });
       return job.id || snapshot.idempotencyKey;
     } catch (err: any) {
-      // If job with this ID already exists, BullMQ might throw or ignore; handle gracefully
       if (err.message?.includes("Job already exists") || err.message?.includes("duplicate")) {
         return snapshot.idempotencyKey;
       }
@@ -57,9 +58,16 @@ export class SmartDLQPublisher {
   }
 
   async close(): Promise<void> {
-    await this.intakeQueue.close();
+    try {
+      await this.intakeQueue.close();
+    } catch (_) {}
+
     if (this.ownConnection && this.redisClient) {
-      await this.redisClient.quit();
+      try {
+        if (this.redisClient.status !== "end") {
+          await this.redisClient.quit();
+        }
+      } catch (_) {}
     }
   }
 }
