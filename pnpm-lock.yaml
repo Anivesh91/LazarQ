@@ -58,6 +58,9 @@ importers:
 
   apps/engine:
     dependencies:
+      '@dlq-healer/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@prisma/client':
         specifier: ^6.9.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)

@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dlq-healer/sdk": "workspace:*",
     "express": "^5.1.0",
     "cors": "^2.8.5",
     "bullmq": "^5.52.0",

@@ -1,3 +1,10 @@
+import path from "path";
+import dotenv from "dotenv";
+
+// Load from root .env or local
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+dotenv.config();
+
 import { z } from "zod";
 
 const envSchema = z.object({
