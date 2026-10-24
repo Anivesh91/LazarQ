@@ -1,4 +1,5 @@
 import { Worker, Job } from "bullmq";
+import { attachDLQHealer } from "@dlq-healer/sdk";
 import { redisConnection } from "../config/redis";
 import { ORDER_QUEUE_NAME } from "../queues/order.queue";
 import { OrderPayload, OrderPayloadSchema } from "../types/order";
@@ -42,6 +43,15 @@ export const orderWorker = new Worker<OrderPayload>(
     concurrency: 5,
   }
 );
+
+// ── Hook DLQ-Healer SDK to automatically intercept terminal failures! ──
+attachDLQHealer(orderWorker, {
+  redisConnection,
+  intakeQueueName: "dlq-healer-intake",
+  sourceId: "playground-app",
+  redactFields: ["customerEmail", "ssn", "secret"],
+  enableLogging: true,
+});
 
 orderWorker.on("completed", (job) => {
   console.log(`[Worker Event] Job #${job.id} COMPLETED`);

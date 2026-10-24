@@ -116,6 +116,9 @@ importers:
 
   apps/playground:
     dependencies:
+      '@dlq-healer/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       bullmq:
         specifier: ^5.52.0
         version: 5.81.5

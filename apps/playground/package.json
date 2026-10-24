@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@dlq-healer/sdk": "workspace:*",
     "express": "^5.1.0",
     "bullmq": "^5.52.0",
     "ioredis": "^5.6.1",
