@@ -2,13 +2,15 @@ import express, { Express } from "express";
 import cors from "cors";
 import { redis } from "./config/redis";
 import { prisma } from "./db/prisma";
+import { incidentRouter } from "./api/incident.routes";
+import { errorHandler } from "./middleware/error-handler";
 
 const app: Express = express();
 
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
-// Health check endpoint
+// ── Health Check Endpoint ──
 app.get("/health", async (_req, res) => {
   let redisStatus = "disconnected";
   let dbStatus = "disconnected";
@@ -36,5 +38,11 @@ app.get("/health", async (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// ── API Routes ──
+app.use("/api/incidents", incidentRouter);
+
+// ── Global Error Handler ──
+app.use(errorHandler);
 
 export { app };
