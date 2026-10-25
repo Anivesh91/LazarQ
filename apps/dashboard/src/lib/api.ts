@@ -2,12 +2,15 @@ import { Incident, Runbook, SystemHealth, RecoveryAttempt } from "./types";
 
 const ENGINE_BASE_URL =
   process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:4000";
+const ENGINE_API_KEY =
+  process.env.NEXT_PUBLIC_ENGINE_API_KEY || "dlq_dev_secret_key";
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${ENGINE_BASE_URL}${path}`;
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      "x-api-key": ENGINE_API_KEY,
       ...options?.headers,
     },
     ...options,
@@ -117,7 +120,46 @@ export const api = {
    * List all knowledge base Runbooks
    */
   async getRunbooks(): Promise<Runbook[]> {
-    return fetchJSON<Runbook[]>("/api/runbooks");
+    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>("/api/runbooks");
+    return res.data || [];
+  },
+
+  /**
+   * Create a new Runbook (automatically triggers 768d Gemini vector embedding)
+   */
+  async createRunbook(data: {
+    title: string;
+    content: string;
+    tags: string[];
+  }): Promise<{ success: boolean; data: Runbook }> {
+    return fetchJSON("/api/runbooks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
+   * Delete a Runbook by ID
+   */
+  async deleteRunbook(id: string): Promise<{ success: boolean; data: any }> {
+    return fetchJSON(`/api/runbooks/${id}`, {
+      method: "DELETE",
+    });
+  },
+
+  /**
+   * Fetch live unmanipulated operational metrics directly from PostgreSQL
+   */
+  async getMetrics(): Promise<{
+    totalIncidents: number;
+    statusCounts: Record<string, number>;
+    resolutionRatePercent: number;
+    quarantineRatePercent: number;
+    runbookMatchRatePercent: number;
+    avgResolutionTimeSeconds: number;
+    totalRunbooks: number;
+  }> {
+    return fetchJSON("/api/metrics");
   },
 
   /**

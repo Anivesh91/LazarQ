@@ -102,6 +102,14 @@ export class IncidentService {
     return prisma.incident.findUnique({
       where: { id },
       include: {
+        matchedRunbook: {
+          select: {
+            id: true,
+            title: true,
+            content: true,
+            tags: true,
+          },
+        },
         recoveryAttempts: { orderBy: { startedAt: "desc" } },
         auditLogs: { orderBy: { createdAt: "asc" } },
       },

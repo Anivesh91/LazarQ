@@ -65,6 +65,12 @@ export interface Incident {
   status: IncidentStatus;
   fingerprint?: string | null;
   matchedRunbookId?: string | null;
+  matchedRunbook?: {
+    id: string;
+    title: string;
+    content: string;
+    tags: string[];
+  } | null;
   aiDiagnosis?: AiDiagnosis | null;
   proposedPayload?: Record<string, any> | null;
   validationResult?: ValidationResult | null;

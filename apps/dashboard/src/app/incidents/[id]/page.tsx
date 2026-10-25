@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   Check,
   CheckCircle2,
   Clock,
@@ -272,6 +273,39 @@ export default function IncidentDetailPage({ params }: PageProps) {
               )}
             </div>
           </div>
+
+          {/* Matched SOP Runbook Card (RAG Retrieval) */}
+          {incident.matchedRunbook && (
+            <div className="rounded-xl border border-cyan-950/60 bg-cyan-950/10 p-5 space-y-2.5">
+              <div className="flex items-center justify-between pb-2 border-b border-cyan-900/30">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-cyan-400" />
+                  <span className="text-xs font-bold text-cyan-300 uppercase tracking-wider">
+                    RAG Matched SOP: {incident.matchedRunbook.title}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {incident.matchedRunbook.tags?.map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800"
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                  <Link
+                    href="/runbooks"
+                    className="text-[11px] text-cyan-400 hover:underline font-mono ml-2"
+                  >
+                    View Studio ➔
+                  </Link>
+                </div>
+              </div>
+              <div className="p-3.5 rounded-lg bg-slate-900/60 border border-slate-900 text-xs font-mono leading-relaxed text-slate-300 whitespace-pre-wrap max-h-36 overflow-y-auto">
+                {incident.matchedRunbook.content}
+              </div>
+            </div>
+          )}
 
           {/* Side-by-Side Payload Diff View */}
           <div className="rounded-xl border border-slate-900 bg-slate-950/60 overflow-hidden">

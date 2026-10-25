@@ -6,6 +6,8 @@ import { incidentRouter } from "./api/incident.routes";
 import { runbookRouter } from "./api/runbook.routes";
 import { circuitBreakerRouter } from "./api/circuit-breaker.routes";
 import { eventsRouter } from "./api/events.routes";
+import { metricsRouter } from "./api/metrics.routes";
+import { apiKeyAuth } from "./middleware/auth.middleware";
 import { errorHandler } from "./middleware/error-handler";
 
 const app: Express = express();
@@ -42,11 +44,15 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+// ── API Key Authentication (Optional/Configurable) ──
+app.use(apiKeyAuth);
+
 // ── API Routes ──
 app.use("/api/incidents", incidentRouter);
 app.use("/api/runbooks", runbookRouter);
 app.use("/api/circuit-breaker", circuitBreakerRouter);
 app.use("/api/events", eventsRouter);
+app.use("/api/metrics", metricsRouter);
 
 // ── Global Error Handler ──
 app.use(errorHandler);
