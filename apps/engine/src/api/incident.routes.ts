@@ -4,6 +4,7 @@ import { incidentService } from "../services/incident.service";
 import { ragService } from "../services/rag.service";
 import { triageService } from "../services/triage.service";
 import { validationService } from "../services/validation.service";
+import { replayService } from "../services/replay.service";
 import { AppError } from "../middleware/error-handler";
 import { prisma } from "../db/prisma";
 
@@ -45,6 +46,20 @@ const IngestSnapshotSchema = z.object({
   attemptsMade: z.number().int().nonnegative(),
   configuredAttempts: z.number().int().positive(),
   occurredAt: z.string().optional(),
+});
+
+const ApproveBodySchema = z.object({
+  approvedBy: z.string().optional(),
+  autoReplay: z.boolean().default(true),
+});
+
+const RejectBodySchema = z.object({
+  rejectedBy: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+const ReplayBodySchema = z.object({
+  recoveryAttemptId: z.string().uuid().optional(),
 });
 
 function getParamId(req: Request): string {
@@ -191,6 +206,85 @@ incidentRouter.post(
       res.status(200).json({
         success: true,
         ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 8. Approve Proposed Repair & Replay ──
+// POST /api/incidents/:id/approve
+incidentRouter.post(
+  "/:id/approve",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const body = ApproveBodySchema.parse(req.body || {});
+      const result = await replayService.approveIncident(id, body);
+      res.status(200).json({
+        success: true,
+        incidentId: id,
+        ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 9. Reject Proposed Repair & Quarantine ──
+// POST /api/incidents/:id/reject
+incidentRouter.post(
+  "/:id/reject",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const body = RejectBodySchema.parse(req.body || {});
+      const result = await replayService.rejectIncident(id, body);
+      res.status(200).json({
+        success: true,
+        incidentId: id,
+        ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 10. Trigger Explicit Replay into Source Queue ──
+// POST /api/incidents/:id/replay
+incidentRouter.post(
+  "/:id/replay",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const body = ReplayBodySchema.parse(req.body || {});
+      const result = await replayService.executeReplay(id, body.recoveryAttemptId);
+      res.status(200).json({
+        success: true,
+        incidentId: id,
+        ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 11. Get Recovery Attempts History for Incident ──
+// GET /api/incidents/:id/recoveries
+incidentRouter.get(
+  "/:id/recoveries",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const recoveries = await replayService.getRecoveryHistory(id);
+      res.status(200).json({
+        incidentId: id,
+        totalAttempts: recoveries.length,
+        recoveries,
       });
     } catch (err) {
       next(err);

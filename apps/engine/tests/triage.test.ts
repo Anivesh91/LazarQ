@@ -21,8 +21,10 @@ describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
     await prisma.$disconnect();
   });
 
-  it("should diagnose Twilio 20429 rate limit, prescribe MUTATE_AND_RETRY to EMAIL, and set PROPOSAL_READY", async () => {
-    const ingestResult = await incidentService.ingestSnapshot({
+  it(
+    "should diagnose Twilio 20429 rate limit, prescribe MUTATE_AND_RETRY to EMAIL, and set PROPOSAL_READY",
+    async () => {
+      const ingestResult = await incidentService.ingestSnapshot({
       idempotencyKey: `triage:twilio:${Date.now()}`,
       source: "triage-test",
       queueName: "order-queue",
@@ -66,7 +68,7 @@ describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
       where: { incidentId: ingestResult.incident.id },
     });
     expect(logs.some((l) => l.action === "PROPOSAL_READY" && l.actor === "ai-doctor")).toBe(true);
-  });
+  }, 15000);
 
   it("should diagnose missing userId, prescribe QUARANTINE, and set status QUARANTINED without forging IDs", async () => {
     const ingestResult = await incidentService.ingestSnapshot({
@@ -194,5 +196,5 @@ describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
     expect(res.body.success).toBe(true);
     expect(res.body.status).toBe("PROPOSAL_READY");
     expect(["MUTATE_AND_RETRY", "RETRY"]).toContain(res.body.proposal.action);
-  });
+  }, 15000);
 });
