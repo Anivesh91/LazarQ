@@ -40,6 +40,48 @@ export interface DiagnoseInput {
   runbookContent?: string;
 }
 
+/**
+ * Executes an async action with bounded exponential backoff on transient network / quota errors.
+ */
+async function withBoundedRetry<T>(
+  fn: () => Promise<T>,
+  options: { maxRetries?: number; initialDelayMs?: number; maxDelayMs?: number } = {}
+): Promise<T> {
+  const maxRetries = options.maxRetries ?? 3;
+  let delay = options.initialDelayMs ?? 1000;
+  const maxDelay = options.maxDelayMs ?? 15000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isTransient =
+        err?.status === 429 ||
+        err?.status === 503 ||
+        err?.message?.includes("429") ||
+        err?.message?.includes("503") ||
+        err?.message?.includes("RESOURCE_EXHAUSTED") ||
+        err?.message?.includes("high demand") ||
+        err?.message?.includes("ECONNRESET") ||
+        err?.message?.includes("ETIMEDOUT");
+
+      if (!isTransient || attempt === maxRetries) {
+        throw err;
+      }
+
+      const jitter = Math.random() * 300;
+      const sleepMs = Math.min(delay + jitter, maxDelay);
+      logger.warn(
+        { attempt, maxRetries, sleepMs, err: err.message },
+        "[LLM Service] Transient provider error; retrying with backoff"
+      );
+      await new Promise((res) => setTimeout(res, sleepMs));
+      delay *= 2;
+    }
+  }
+  return fn();
+}
+
 export class LLMService {
   private client: GoogleGenAI | null = null;
   private readonly modelName: string;
@@ -103,14 +145,20 @@ Generate the JSON remediation proposal now.`;
     try {
       logger.info({ model: this.modelName, jobName: input.jobName }, "Requesting structured repair proposal from Gemini");
 
-      const response = await this.client.models.generateContent({
-        model: this.modelName,
-        contents: `${systemPrompt}\n\n${userPrompt}`,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.1, // low temperature for deterministic adherence
+      const response = await withBoundedRetry(
+        async () => {
+          if (!this.client) throw new Error("LLM client not initialized");
+          return this.client.models.generateContent({
+            model: this.modelName,
+            contents: `${systemPrompt}\n\n${userPrompt}`,
+            config: {
+              responseMimeType: "application/json",
+              temperature: 0.1, // low temperature for deterministic adherence
+            },
+          });
         },
-      });
+        { maxRetries: 3, initialDelayMs: 1000, maxDelayMs: 15000 }
+      );
 
       const responseText = response.text?.trim();
       if (!responseText) {
