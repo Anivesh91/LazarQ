@@ -3,6 +3,7 @@ import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 import { incidentService } from "../services/incident.service";
 import { triageService } from "../services/triage.service";
+import { validationService } from "../services/validation.service";
 import { IncidentSnapshot } from "@dlq-healer/sdk";
 
 export const INTAKE_QUEUE_NAME = "dlq-healer-intake";
@@ -33,15 +34,22 @@ export function startHealerWorker(): Worker<IncidentSnapshot> {
 
       const result = await incidentService.ingestSnapshot(job.data);
 
-      // Automatically trigger RAG + AI Doctor triage for non-duplicate incidents
-      let triageResult = null;
+      // Automatically trigger RAG + AI Doctor triage + Validation Gate for non-duplicate incidents
+      let finalStatus = result.incident.status;
       if (!result.isDuplicate) {
         try {
-          triageResult = await triageService.diagnoseIncident(result.incident.id);
+          const triageResult = await triageService.diagnoseIncident(result.incident.id);
+          finalStatus = triageResult.status;
+
+          // If proposal is ready, run through 5-Stage Deterministic Validation Gate
+          if (triageResult.status === "PROPOSAL_READY") {
+            const validationResult = await validationService.validateProposal(result.incident.id);
+            finalStatus = validationResult.status;
+          }
         } catch (matchErr: any) {
           logger.error(
             { incidentId: result.incident.id, err: matchErr.message },
-            "[Healer Worker] AI Doctor triage encountered an unexpected error"
+            "[Healer Worker] AI Doctor triage/validation encountered an unexpected error"
           );
         }
       }
@@ -49,7 +57,7 @@ export function startHealerWorker(): Worker<IncidentSnapshot> {
       return {
         incidentId: result.incident.id,
         isDuplicate: result.isDuplicate,
-        status: triageResult ? triageResult.status : result.incident.status,
+        status: finalStatus,
       };
     },
     {

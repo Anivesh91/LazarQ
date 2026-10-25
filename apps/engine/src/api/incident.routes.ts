@@ -3,6 +3,7 @@ import { z } from "zod";
 import { incidentService } from "../services/incident.service";
 import { ragService } from "../services/rag.service";
 import { triageService } from "../services/triage.service";
+import { validationService } from "../services/validation.service";
 import { AppError } from "../middleware/error-handler";
 import { prisma } from "../db/prisma";
 
@@ -169,6 +170,24 @@ incidentRouter.post(
     try {
       const id = getParamId(req);
       const result = await triageService.diagnoseIncident(id);
+      res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 7. Run 5-Stage Deterministic Validation Gate ──
+// POST /api/incidents/:id/validate
+incidentRouter.post(
+  "/:id/validate",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const result = await validationService.validateProposal(id);
       res.status(200).json({
         success: true,
         ...result,
