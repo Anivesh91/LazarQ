@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { incidentService } from "../services/incident.service";
+import { ragService } from "../services/rag.service";
 import { AppError } from "../middleware/error-handler";
 import { prisma } from "../db/prisma";
 
@@ -133,6 +134,25 @@ incidentRouter.get(
         incidentId: id,
         totalEvents: history.length,
         history,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 5. Trigger RAG Knowledge Base Matching ──
+// POST /api/incidents/:id/match
+incidentRouter.post(
+  "/:id/match",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const result = await ragService.matchIncident(id);
+      res.status(200).json({
+        success: true,
+        incidentId: id,
+        ...result,
       });
     } catch (err) {
       next(err);
