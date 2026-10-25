@@ -37,6 +37,9 @@ export class SmartDLQPublisher {
         removeOnFail: false,
       },
     });
+
+    // Suppress unhandled queue connection errors during teardown
+    this.intakeQueue.on("error", () => {});
   }
 
   /**
@@ -59,16 +62,12 @@ export class SmartDLQPublisher {
 
   async close(): Promise<void> {
     try {
-      await this.intakeQueue.close();
+      await this.intakeQueue.close().catch(() => {});
     } catch (_) {}
 
     if (this.ownConnection && this.redisClient) {
       try {
-        if (this.redisClient.status === "ready" || this.redisClient.status === "connect") {
-          await this.redisClient.quit().catch(() => {});
-        } else {
-          this.redisClient.disconnect();
-        }
+        this.redisClient.disconnect();
       } catch (_) {}
     }
   }
