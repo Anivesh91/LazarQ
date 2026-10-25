@@ -5,6 +5,7 @@ import { prisma } from "./db/prisma";
 import { incidentRouter } from "./api/incident.routes";
 import { runbookRouter } from "./api/runbook.routes";
 import { circuitBreakerRouter } from "./api/circuit-breaker.routes";
+import { eventsRouter } from "./api/events.routes";
 import { errorHandler } from "./middleware/error-handler";
 
 const app: Express = express();
@@ -45,6 +46,7 @@ app.get("/health", async (_req, res) => {
 app.use("/api/incidents", incidentRouter);
 app.use("/api/runbooks", runbookRouter);
 app.use("/api/circuit-breaker", circuitBreakerRouter);
+app.use("/api/events", eventsRouter);
 
 // ── Global Error Handler ──
 app.use(errorHandler);

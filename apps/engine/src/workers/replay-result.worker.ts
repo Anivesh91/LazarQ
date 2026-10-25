@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 import { prisma } from "../db/prisma";
+import { eventBroadcaster } from "../services/event-broadcaster.service";
 
 export class ReplayResultObserver {
   private observers: Map<string, QueueEvents> = new Map();
@@ -119,6 +120,13 @@ export class ReplayResultObserver {
         }),
       ]);
 
+      eventBroadcaster.broadcast("incident:resolved", {
+        incidentId: attempt.incidentId,
+        attemptId: attempt.id,
+        replayJobId: jobId,
+        queueName,
+      });
+
       return true;
     } catch (err: any) {
       logger.error(
@@ -192,6 +200,14 @@ export class ReplayResultObserver {
           },
         }),
       ]);
+
+      eventBroadcaster.broadcast("incident:failed", {
+        incidentId: attempt.incidentId,
+        attemptId: attempt.id,
+        replayJobId: jobId,
+        queueName,
+        failedReason,
+      });
 
       return true;
     } catch (err: any) {

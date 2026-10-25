@@ -2,6 +2,7 @@ import { prisma } from "../db/prisma";
 import { logger } from "../config/logger";
 import { IncidentSnapshot } from "@dlq-healer/sdk";
 import { Incident } from "@prisma/client";
+import { eventBroadcaster } from "./event-broadcaster.service";
 
 export class IncidentService {
   /**
@@ -87,6 +88,9 @@ export class IncidentService {
       },
       "✅ Incident successfully persisted to PostgreSQL"
     );
+
+    // Broadcast live event to connected dashboards
+    eventBroadcaster.broadcast("incident:new", { incident });
 
     return { incident, isDuplicate: false };
   }

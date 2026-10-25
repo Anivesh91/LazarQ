@@ -5,6 +5,7 @@ import { env } from "./config/env";
 import { startHealerWorker, stopHealerWorker } from "./workers/healer.worker";
 import { queueReinjector } from "./replay/reinjector";
 import { replayResultObserver } from "./workers/replay-result.worker";
+import { eventBroadcaster } from "./services/event-broadcaster.service";
 import { redis } from "./config/redis";
 import { prisma } from "./db/prisma";
 
@@ -26,10 +27,11 @@ async function shutdown(signal: string) {
       logger.info("HTTP server closed.");
     });
 
-    // 2. Stop intake queue consumer and replay observers
+    // 2. Stop intake queue consumer, replay observers, and SSE broadcaster
     await stopHealerWorker();
     await replayResultObserver.closeAll();
     await queueReinjector.closeAll();
+    eventBroadcaster.closeAll();
 
     // 3. Disconnect Redis and PostgreSQL
     await redis.quit();

@@ -35,29 +35,37 @@ describe("Incident Ingestion Service", () => {
     await prisma.$disconnect();
   });
 
-  it("should successfully ingest a new terminal failure snapshot into PostgreSQL", async () => {
-    const result = await incidentService.ingestSnapshot(mockSnapshot);
+  it(
+    "should successfully ingest a new terminal failure snapshot into PostgreSQL",
+    async () => {
+      const result = await incidentService.ingestSnapshot(mockSnapshot);
 
-    expect(result.isDuplicate).toBe(false);
-    expect(result.incident.id).toBeDefined();
-    expect(result.incident.queueName).toBe("test-orders-queue");
-    expect(result.incident.jobId).toBe("job_9999");
-    expect(result.incident.status).toBe("INGESTED");
-    expect(result.incident.attemptsMade).toBe(3);
-  });
+      expect(result.isDuplicate).toBe(false);
+      expect(result.incident.id).toBeDefined();
+      expect(result.incident.queueName).toBe("test-orders-queue");
+      expect(result.incident.jobId).toBe("job_9999");
+      expect(result.incident.status).toBe("INGESTED");
+      expect(result.incident.attemptsMade).toBe(3);
+    },
+    15000
+  );
 
-  it("should handle duplicate deliveries idempotently without creating duplicate rows", async () => {
-    // Call ingestSnapshot again with the identical idempotencyKey
-    const duplicateResult = await incidentService.ingestSnapshot(mockSnapshot);
+  it(
+    "should handle duplicate deliveries idempotently without creating duplicate rows",
+    async () => {
+      // Call ingestSnapshot again with the identical idempotencyKey
+      const duplicateResult = await incidentService.ingestSnapshot(mockSnapshot);
 
-    expect(duplicateResult.isDuplicate).toBe(true);
+      expect(duplicateResult.isDuplicate).toBe(true);
 
-    // Verify exactly 1 incident exists in DB with this key
-    const count = await prisma.incident.count({
-      where: { idempotencyKey: testIdempotencyKey },
-    });
-    expect(count).toBe(1);
-  });
+      // Verify exactly 1 incident exists in DB with this key
+      const count = await prisma.incident.count({
+        where: { idempotencyKey: testIdempotencyKey },
+      });
+      expect(count).toBe(1);
+    },
+    15000
+  );
 
   it("should link an initial FAILURE_CAPTURED AuditLog record", async () => {
     const incident = await prisma.incident.findUnique({

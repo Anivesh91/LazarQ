@@ -3,6 +3,7 @@ import { logger } from "../config/logger";
 import { AppError } from "../middleware/error-handler";
 import { queueReinjector } from "../replay/reinjector";
 import { replayResultObserver } from "../workers/replay-result.worker";
+import { eventBroadcaster } from "./event-broadcaster.service";
 import { checkInvariants } from "../sandbox/invariants";
 
 export interface ApproveOptions {
@@ -113,6 +114,13 @@ export class ReplayService {
       "✅ Incident recovery proposal approved"
     );
 
+    eventBroadcaster.broadcast("incident:approved", {
+      incidentId,
+      attemptId: recoveryAttempt.id,
+      approvedBy,
+      autoReplay,
+    });
+
     // If autoReplay is requested, immediately trigger execution
     if (autoReplay) {
       return this.executeReplay(incidentId, recoveryAttempt.id);
@@ -179,6 +187,12 @@ export class ReplayService {
       { incidentId, rejectedBy, reason },
       "⚠️ Incident repair proposal rejected; transitioned to QUARANTINED"
     );
+
+    eventBroadcaster.broadcast("incident:quarantined", {
+      incidentId,
+      rejectedBy,
+      reason,
+    });
 
     return {
       incident: updatedIncident,
@@ -308,6 +322,13 @@ export class ReplayService {
       },
       "🚀 Job successfully re-injected into original queue; incident marked REPLAYING"
     );
+
+    eventBroadcaster.broadcast("incident:replaying", {
+      incidentId,
+      attemptId: updatedAttempt.id,
+      replayJobId,
+      queueName: incident.queueName,
+    });
 
     return {
       incident: updatedIncident,

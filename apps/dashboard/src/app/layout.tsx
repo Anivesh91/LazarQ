@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DLQ-Healer Dashboard",
-  description: "AI-Assisted Queue Failure Recovery Platform",
+  title: "DLQ-Healer | Autonomous Recovery Cockpit",
+  description:
+    "Self-hosted AI-Assisted Dead Letter Queue Failure Recovery Platform",
 };
 
 export default function RootLayout({
@@ -11,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="bg-slate-950 text-slate-100 antialiased min-h-screen">
+    <html lang="en" className="dark">
+      <body className="bg-slate-950 text-slate-100 antialiased min-h-screen selection:bg-cyan-500/20 selection:text-cyan-200">
         {children}
       </body>
     </html>

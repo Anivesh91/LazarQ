@@ -1,6 +1,7 @@
 import { prisma } from "../db/prisma";
 import { llmService, RepairProposal } from "./llm.service";
 import { ragService } from "./rag.service";
+import { eventBroadcaster } from "./event-broadcaster.service";
 import { logger } from "../config/logger";
 import { AppError } from "../middleware/error-handler";
 
@@ -133,6 +134,16 @@ export class TriageService {
       logger.info(
         { incidentId, status: nextStatus, action: proposal.action },
         "AI diagnosis and repair proposal generated successfully"
+      );
+
+      // Broadcast proposal to live dashboards
+      eventBroadcaster.broadcast(
+        nextStatus === "QUARANTINED" ? "incident:quarantined" : "incident:proposed",
+        {
+          incidentId,
+          status: nextStatus,
+          proposal,
+        }
       );
 
       return {
