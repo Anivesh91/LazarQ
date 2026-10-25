@@ -1,16 +1,12 @@
 import { Incident, Runbook, SystemHealth, RecoveryAttempt } from "./types";
 
-const ENGINE_BASE_URL =
-  process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:4000";
-const ENGINE_API_KEY =
-  process.env.NEXT_PUBLIC_ENGINE_API_KEY || "dlq_dev_secret_key";
+const ENGINE_BASE_URL = "/api/engine";
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${ENGINE_BASE_URL}${path}`;
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": ENGINE_API_KEY,
       ...options?.headers,
     },
     ...options,
@@ -46,6 +42,7 @@ export const api = {
     queueName?: string;
     page?: number;
     limit?: number;
+    signal?: AbortSignal;
   } = {}): Promise<{
     incidents: Incident[];
     pagination: {
@@ -62,14 +59,16 @@ export const api = {
     if (params.limit) searchParams.set("limit", String(params.limit));
 
     const query = searchParams.toString();
-    return fetchJSON(`/api/incidents${query ? `?${query}` : ""}`);
+    return fetchJSON(`/incidents${query ? `?${query}` : ""}`, {
+      signal: params.signal,
+    });
   },
 
   /**
    * Get single incident details
    */
   async getIncidentById(id: string): Promise<Incident> {
-    return fetchJSON<Incident>(`/api/incidents/${id}`);
+    return fetchJSON<Incident>(`/incidents/${encodeURIComponent(id)}`);
   },
 
   /**
@@ -80,7 +79,7 @@ export const api = {
     totalAttempts: number;
     recoveries: RecoveryAttempt[];
   }> {
-    return fetchJSON(`/api/incidents/${id}/recoveries`);
+    return fetchJSON(`/incidents/${encodeURIComponent(id)}/recoveries`);
   },
 
   /**
@@ -94,7 +93,7 @@ export const api = {
     incident: Incident;
     recoveryAttempt: RecoveryAttempt;
   }> {
-    return fetchJSON(`/api/incidents/${id}/approve`, {
+    return fetchJSON(`/incidents/${encodeURIComponent(id)}/approve`, {
       method: "POST",
       body: JSON.stringify(options),
     });
@@ -110,7 +109,7 @@ export const api = {
     success: boolean;
     incident: Incident;
   }> {
-    return fetchJSON(`/api/incidents/${id}/reject`, {
+    return fetchJSON(`/incidents/${encodeURIComponent(id)}/reject`, {
       method: "POST",
       body: JSON.stringify(options),
     });
@@ -120,7 +119,7 @@ export const api = {
    * List all knowledge base Runbooks
    */
   async getRunbooks(): Promise<Runbook[]> {
-    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>("/api/runbooks");
+    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>("/runbooks");
     return res.data || [];
   },
 
@@ -132,7 +131,7 @@ export const api = {
     content: string;
     tags: string[];
   }): Promise<{ success: boolean; data: Runbook }> {
-    return fetchJSON("/api/runbooks", {
+    return fetchJSON("/runbooks", {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -142,7 +141,7 @@ export const api = {
    * Delete a Runbook by ID
    */
   async deleteRunbook(id: string): Promise<{ success: boolean; data: any }> {
-    return fetchJSON(`/api/runbooks/${id}`, {
+    return fetchJSON(`/runbooks/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
   },
@@ -159,16 +158,18 @@ export const api = {
     avgResolutionTimeSeconds: number;
     totalRunbooks: number;
   }> {
-    return fetchJSON("/api/metrics");
+    return fetchJSON("/metrics");
   },
 
   /**
    * Get Circuit Breaker status
    */
   async getCircuitBreakerStatus(): Promise<{
-    status: string;
-    metrics: Record<string, any>;
+    success: boolean;
+    totalBreakers: number;
+    openBreakers: number;
+    breakers: Array<{ state: "CLOSED" | "OPEN" | "HALF_OPEN" }>;
   }> {
-    return fetchJSON("/api/circuit-breaker");
+    return fetchJSON("/circuit-breaker");
   },
 };

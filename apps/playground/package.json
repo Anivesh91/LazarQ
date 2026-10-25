@@ -6,11 +6,13 @@
     "dev": "tsx watch src/producer.ts",
     "worker": "tsx watch src/workers/order.worker.ts",
     "seed": "tsx src/seed-jobs.ts",
+    "demo": "tsx src/demo-self-heal.ts",
     "build": "tsc",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@dlq-healer/sdk": "workspace:*",
+    "@dlq-healer/engine": "workspace:*",
     "express": "^5.1.0",
     "bullmq": "^5.52.0",
     "ioredis": "^5.6.1",

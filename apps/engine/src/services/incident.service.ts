@@ -42,42 +42,48 @@ export class IncidentService {
     }
 
     // ── 2. Atomic Transaction: Create Incident + Initial AuditLog ──
-    const incident = await prisma.$transaction(async (tx) => {
-      const created = await tx.incident.create({
-        data: {
-          idempotencyKey,
-          sourceId: source || "sdk-v1",
-          queueName,
-          jobId: String(jobId),
-          jobName: jobName || "unknown",
-          payloadSnapshot: payloadSnapshot || {},
-          expectedJsonSchema: expectedJsonSchema || undefined,
-          errorMessage,
-          stackTrace: stackTrace || null,
-          attemptsMade,
-          configuredAttempts,
-          status: "INGESTED",
-          occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          incidentId: created.id,
-          action: "FAILURE_CAPTURED",
-          actor: "system/intake",
-          details: {
+    const incident = await prisma.$transaction(
+      async (tx) => {
+        const created = await tx.incident.create({
+          data: {
+            idempotencyKey,
+            sourceId: source || "sdk-v1",
             queueName,
             jobId: String(jobId),
+            jobName: jobName || "unknown",
+            payloadSnapshot: payloadSnapshot || {},
+            expectedJsonSchema: expectedJsonSchema || undefined,
+            errorMessage,
+            stackTrace: stackTrace || null,
             attemptsMade,
             configuredAttempts,
-            errorMessage,
+            status: "INGESTED",
+            occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
           },
-        },
-      });
+        });
 
-      return created;
-    });
+        await tx.auditLog.create({
+          data: {
+            incidentId: created.id,
+            action: "FAILURE_CAPTURED",
+            actor: "system/intake",
+            details: {
+              queueName,
+              jobId: String(jobId),
+              attemptsMade,
+              configuredAttempts,
+              errorMessage,
+            },
+          },
+        });
+
+        return created;
+      },
+      {
+        maxWait: 10000,
+        timeout: 15000,
+      }
+    );
 
     logger.info(
       {

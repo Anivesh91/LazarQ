@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -28,8 +28,13 @@ export default function IncidentsPage() {
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const requestController = useRef<AbortController | null>(null);
 
   const loadIncidents = useCallback(async () => {
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
+
     try {
       setLoading(true);
       const data = await api.getIncidents({
@@ -37,13 +42,20 @@ export default function IncidentsPage() {
         queueName: queueSearch || undefined,
         page,
         limit: 15,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       setIncidents(data.incidents);
       setTotalPages(data.pagination.totalPages || 1);
     } catch (err) {
-      console.error("Failed to load incidents:", err);
+      if (!controller.signal.aborted) {
+        console.error("Failed to load incidents:", err);
+      }
     } finally {
-      setLoading(false);
+      if (requestController.current === controller) {
+        requestController.current = null;
+        setLoading(false);
+      }
     }
   }, [statusFilter, queueSearch, page]);
 
@@ -61,6 +73,7 @@ export default function IncidentsPage() {
 
   useEffect(() => {
     loadIncidents();
+    return () => requestController.current?.abort();
   }, [loadIncidents]);
 
   const handleApprove = async (id: string) => {

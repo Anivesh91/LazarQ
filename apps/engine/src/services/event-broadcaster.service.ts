@@ -7,6 +7,8 @@ export interface BroadcastEvent {
   timestamp: string;
 }
 
+const MAX_SSE_CLIENTS = 100;
+
 export class EventBroadcasterService {
   private clients: Set<Response> = new Set();
   private heartbeatInterval: NodeJS.Timeout | null = null;
@@ -44,6 +46,11 @@ export class EventBroadcasterService {
    * Registers a new HTTP SSE client connection.
    */
   public addClient(req: Request, res: Response): void {
+    if (this.clients.size >= MAX_SSE_CLIENTS) {
+      res.status(503).json({ message: "Maximum SSE connections reached" });
+      return;
+    }
+
     // Required headers for SSE
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -92,7 +99,16 @@ export class EventBroadcasterService {
       timestamp: new Date().toISOString(),
     };
 
-    const message = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+    let message: string;
+    try {
+      message = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+    } catch (err) {
+      logger.error(
+        { err, eventName },
+        "[SSE Broadcaster] Failed to serialize event payload"
+      );
+      return;
+    }
 
     let deadClients = 0;
     for (const client of this.clients) {

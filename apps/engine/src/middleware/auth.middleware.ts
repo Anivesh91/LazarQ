@@ -18,12 +18,8 @@ export function apiKeyAuth(req: Request, _res: Response, next: NextFunction) {
     return next();
   }
 
-  // Exempt health and SSE endpoints
-  if (
-    req.path === "/health" ||
-    req.path === "/api/events" ||
-    req.path === "/api/events/status"
-  ) {
+  // Health remains public so infrastructure probes can run without credentials.
+  if (req.path === "/health") {
     return next();
   }
 

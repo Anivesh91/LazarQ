@@ -20,7 +20,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
-  sseStatus = "connected",
+  sseStatus = "connecting",
   pendingApprovalsCount = 0,
 }: SidebarProps) {
   const pathname = usePathname();

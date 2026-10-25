@@ -33,9 +33,9 @@ export default function RunbooksPage() {
       setLoading(true);
       const data = await api.getRunbooks();
       setRunbooks(data);
-      if (data.length > 0 && !selectedRunbook) {
-        setSelectedRunbook(data[0]);
-      }
+      setSelectedRunbook((current) =>
+        data.find((runbook) => runbook.id === current?.id) ?? data[0] ?? null
+      );
     } catch (err) {
       console.error("Failed to load runbooks:", err);
     } finally {
@@ -242,10 +242,11 @@ export default function RunbooksPage() {
 
             <form onSubmit={handleCreate} className="space-y-4 text-xs">
               <div>
-                <label className="block text-slate-400 font-medium mb-1">
+                <label htmlFor="runbook-title" className="block text-slate-400 font-medium mb-1">
                   Runbook Title
                 </label>
                 <input
+                  id="runbook-title"
                   type="text"
                   placeholder="e.g., Stripe API 429 Rate Limit Remediation"
                   value={newTitle}
@@ -256,10 +257,11 @@ export default function RunbooksPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 font-medium mb-1">
+                <label htmlFor="runbook-tags" className="block text-slate-400 font-medium mb-1">
                   Tags (comma separated)
                 </label>
                 <input
+                  id="runbook-tags"
                   type="text"
                   placeholder="e.g., stripe, rate-limit, payment, transient"
                   value={newTags}
@@ -269,10 +271,11 @@ export default function RunbooksPage() {
               </div>
 
               <div>
-                <label className="block text-slate-400 font-medium mb-1">
+                <label htmlFor="runbook-content" className="block text-slate-400 font-medium mb-1">
                   Remediation SOP Directives (Markdown)
                 </label>
                 <textarea
+                  id="runbook-content"
                   rows={8}
                   placeholder={`### Diagnosis\nExplain what causes this failure...\n\n### Remediation Directive\nPrescribe RETRY with 60s delay or MUTATE_AND_RETRY...`}
                   value={newContent}

@@ -33,26 +33,35 @@ export default function OverviewPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const data = await api.getIncidents({ limit: 15 });
-      setIncidents(data.incidents);
-
-      // Compute statistics
-      const allIncidents = data.incidents;
-      setStats({
-        total: data.pagination.total || allIncidents.length,
-        awaitingApproval: allIncidents.filter(
-          (i) => i.status === "AWAITING_APPROVAL"
-        ).length,
-        resolved: allIncidents.filter((i) => i.status === "RESOLVED").length,
-        quarantined: allIncidents.filter(
-          (i) =>
-            i.status === "QUARANTINED" ||
-            i.status === "SANDBOX_FAILED" ||
-            i.status === "REPLAY_FAILED"
-        ).length,
-      });
-    } catch (err) {
-      console.error("Failed to load incidents:", err);
+      const incidentsRequest = api
+        .getIncidents({ limit: 15 })
+        .then((data) => {
+          setIncidents(data.incidents);
+          setStats((current) => ({
+            ...current,
+            total: data.pagination.total || data.incidents.length,
+          }));
+        })
+        .catch((err) => {
+          console.error("Failed to load incidents:", err);
+        });
+      const metricsRequest = api
+        .getMetrics()
+        .then((metrics) => {
+          setStats((current) => ({
+            ...current,
+            awaitingApproval: metrics.statusCounts["AWAITING_APPROVAL"] || 0,
+            resolved: metrics.statusCounts["RESOLVED"] || 0,
+            quarantined:
+              (metrics.statusCounts["QUARANTINED"] || 0) +
+              (metrics.statusCounts["SANDBOX_FAILED"] || 0) +
+              (metrics.statusCounts["REPLAY_FAILED"] || 0),
+          }));
+        })
+        .catch((err) => {
+          console.error("Failed to load incident metrics:", err);
+        });
+      await Promise.all([incidentsRequest, metricsRequest]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,6 +93,13 @@ export default function OverviewPage() {
     setRefreshing(true);
     loadData();
   };
+
+  const liveSyncLabel =
+    sseStatus === "connected"
+      ? "Live Sync Active"
+      : sseStatus === "connecting"
+      ? "Connecting to Live Sync"
+      : "Live Sync Disconnected";
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -284,9 +300,25 @@ export default function OverviewPage() {
 
               <div className="pt-4 border-t border-slate-900 mt-4 text-[11px] text-slate-500 flex items-center justify-between">
                 <span>Autonomous Engine Engine v0.3</span>
-                <span className="text-emerald-400 font-medium flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 inline-block" />
-                  Live Sync Active
+                <span
+                  className={`font-medium flex items-center gap-1 ${
+                    sseStatus === "connected"
+                      ? "text-emerald-400"
+                      : sseStatus === "connecting"
+                      ? "text-amber-400"
+                      : "text-rose-400"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full inline-block ${
+                      sseStatus === "connected"
+                        ? "bg-emerald-400"
+                        : sseStatus === "connecting"
+                        ? "bg-amber-400"
+                        : "bg-rose-400"
+                    }`}
+                  />
+                  {liveSyncLabel}
                 </span>
               </div>
             </div>

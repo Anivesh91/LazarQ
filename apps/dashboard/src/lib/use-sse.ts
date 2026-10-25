@@ -3,9 +3,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { SSEEvent } from "./types";
 
-const ENGINE_BASE_URL =
-  process.env.NEXT_PUBLIC_ENGINE_URL || "http://localhost:4000";
-
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
 export function useSSE(onEvent?: (event: SSEEvent) => void) {
@@ -23,7 +20,7 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     }
 
     setStatus("connecting");
-    const es = new EventSource(`${ENGINE_BASE_URL}/api/events`);
+    const es = new EventSource("/api/engine/events");
     eventSourceRef.current = es;
 
     es.onopen = () => {

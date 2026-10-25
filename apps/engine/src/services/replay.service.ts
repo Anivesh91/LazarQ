@@ -270,18 +270,7 @@ export class ReplayService {
     // Ensure QueueEvents observer is attached to the queue
     replayResultObserver.ensureQueueObserver(incident.queueName);
 
-    // Re-inject into BullMQ queue
-    await queueReinjector.reinjectJob(
-      incident.queueName,
-      incident.jobName,
-      attempt.proposedPayload as Record<string, any>,
-      {
-        delayMs: delaySeconds * 1000,
-        jobId: replayJobId,
-      }
-    );
-
-    // Update DB: Attempt -> IN_PROGRESS, Incident -> REPLAYING
+    // Update DB FIRST before pushing to BullMQ so fast-completing workers don't race
     const [updatedAttempt, updatedIncident] = await prisma.$transaction([
       prisma.recoveryAttempt.update({
         where: { id: attempt.id },
@@ -297,7 +286,64 @@ export class ReplayService {
           status: "REPLAYING",
         },
       }),
-      prisma.auditLog.create({
+    ]);
+
+    // Re-inject into BullMQ queue
+    try {
+      await queueReinjector.reinjectJob(
+        incident.queueName,
+        incident.jobName,
+        attempt.proposedPayload as Record<string, any>,
+        {
+          delayMs: delaySeconds * 1000,
+          jobId: replayJobId,
+        }
+      );
+    } catch (enqueueError) {
+      try {
+        await prisma.$transaction([
+          prisma.recoveryAttempt.update({
+            where: { id: attempt.id },
+            data: {
+              replayJobId: null,
+              status: "QUEUED",
+              failureReason: null,
+              startedAt: attempt.startedAt,
+              completedAt: null,
+            },
+          }),
+          prisma.incident.update({
+            where: { id: incidentId },
+            data: { status: "REPLAY_QUEUED" },
+          }),
+          prisma.auditLog.create({
+            data: {
+              incidentId,
+              action: "RECOVERY_REPLAY_FAILED",
+              actor: "reinjector",
+              details: {
+                recoveryAttemptId: attempt.id,
+                replayJobId,
+                queueName: incident.queueName,
+                error:
+                  enqueueError instanceof Error
+                    ? enqueueError.message
+                    : String(enqueueError),
+              },
+            },
+          }),
+        ]);
+      } catch (restoreError) {
+        logger.error(
+          { err: restoreError, incidentId, attemptId: attempt.id },
+          "Failed to restore replay state after enqueue failure"
+        );
+      }
+      throw enqueueError;
+    }
+
+    try {
+      await prisma.auditLog.create({
         data: {
           incidentId,
           action: "JOB_REPLAYED",
@@ -310,8 +356,13 @@ export class ReplayService {
             delaySeconds,
           },
         },
-      }),
-    ]);
+      });
+    } catch (auditError) {
+      logger.error(
+        { err: auditError, incidentId, attemptId: attempt.id, replayJobId },
+        "Replay was enqueued, but JOB_REPLAYED audit persistence failed"
+      );
+    }
 
     logger.info(
       {

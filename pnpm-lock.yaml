@@ -283,6 +283,9 @@ importers:
 
   apps/playground:
     dependencies:
+      '@dlq-healer/engine':
+        specifier: workspace:*
+        version: link:../engine
       '@dlq-healer/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

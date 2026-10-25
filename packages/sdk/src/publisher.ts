@@ -6,6 +6,7 @@ export class SmartDLQPublisher {
   private intakeQueue: Queue<IncidentSnapshot>;
   private ownConnection: boolean = false;
   private redisClient?: Redis;
+  private shuttingDown = false;
 
   constructor(
     queueName: string = "dlq-healer-intake",
@@ -19,8 +20,11 @@ export class SmartDLQPublisher {
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
       });
-      // Attach silent error listener to prevent uncaught "Connection is closed" errors during teardown
-      this.redisClient.on("error", () => {});
+      this.redisClient.on("error", (err) => {
+        if (!this.shuttingDown || !this.isExpectedShutdownError(err)) {
+          console.error("[DLQ-Healer SDK] Redis connection error:", err);
+        }
+      });
       connection = this.redisClient;
       this.ownConnection = true;
     }
@@ -38,8 +42,15 @@ export class SmartDLQPublisher {
       },
     });
 
-    // Suppress unhandled queue connection errors during teardown
-    this.intakeQueue.on("error", () => {});
+    this.intakeQueue.on("error", (err) => {
+      if (!this.shuttingDown || !this.isExpectedShutdownError(err)) {
+        console.error("[DLQ-Healer SDK] Intake queue error:", err);
+      }
+    });
+  }
+
+  private isExpectedShutdownError(error: Error): boolean {
+    return /connection is (already )?closed/i.test(error.message);
   }
 
   /**
@@ -61,14 +72,42 @@ export class SmartDLQPublisher {
   }
 
   async close(): Promise<void> {
+    this.shuttingDown = true;
+    let closeError: unknown;
+
     try {
-      await this.intakeQueue.close().catch(() => {});
-    } catch (_) {}
+      await this.intakeQueue.close();
+    } catch (err) {
+      if (!(err instanceof Error) || !this.isExpectedShutdownError(err)) {
+        closeError = err;
+      }
+    }
 
     if (this.ownConnection && this.redisClient) {
       try {
+        if (this.redisClient.status === "ready") {
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const quitCompleted = await Promise.race([
+            this.redisClient.quit().then(() => true),
+            new Promise<boolean>((resolve) => {
+              timeout = setTimeout(() => resolve(false), 5000);
+            }),
+          ]);
+          if (timeout) clearTimeout(timeout);
+          if (!quitCompleted) {
+            this.redisClient.disconnect();
+          }
+        } else {
+          this.redisClient.disconnect();
+        }
+      } catch (err) {
         this.redisClient.disconnect();
-      } catch (_) {}
+        if (!(err instanceof Error) || !this.isExpectedShutdownError(err)) {
+          closeError ??= err;
+        }
+      }
     }
+
+    if (closeError) throw closeError;
   }
 }

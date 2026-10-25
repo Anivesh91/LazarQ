@@ -71,7 +71,7 @@ export class ReplayResultObserver {
       const attempt = await prisma.recoveryAttempt.findFirst({
         where: {
           replayJobId: jobId,
-          status: "IN_PROGRESS",
+          status: { in: ["IN_PROGRESS", "QUEUED"] },
         },
         include: { incident: true },
       });
@@ -150,7 +150,7 @@ export class ReplayResultObserver {
       const attempt = await prisma.recoveryAttempt.findFirst({
         where: {
           replayJobId: jobId,
-          status: "IN_PROGRESS",
+          status: { in: ["IN_PROGRESS", "QUEUED"] },
         },
         include: { incident: true },
       });

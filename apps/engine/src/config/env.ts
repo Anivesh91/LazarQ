@@ -1,8 +1,11 @@
 import path from "path";
 import dotenv from "dotenv";
 
-// Load from root .env or local
+// Search multiple standard locations for .env across monorepo workspaces
+dotenv.config({ path: path.resolve(__dirname, "../../../../.env") }); // Root .env
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });       // apps/engine/.env
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });         // Working directory .env
 dotenv.config();
 
 import { z } from "zod";

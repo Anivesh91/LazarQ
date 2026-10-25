@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -23,6 +23,7 @@ import { Header } from "../../../components/Header";
 import { StatusBadge } from "../../../components/StatusBadge";
 import { api } from "../../../lib/api";
 import { Incident, RecoveryAttempt } from "../../../lib/types";
+import { useSSE } from "../../../lib/use-sse";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -38,7 +39,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [acting, setActing] = useState<boolean>(false);
 
-  const loadDetail = async () => {
+  const loadDetail = useCallback(async () => {
     try {
       setLoading(true);
       const inc = await api.getIncidentById(incidentId);
@@ -51,11 +52,24 @@ export default function IncidentDetailPage({ params }: PageProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [incidentId]);
 
   useEffect(() => {
     loadDetail();
-  }, [incidentId]);
+  }, [loadDetail]);
+
+  useSSE(
+    useCallback(
+      (event: any) => {
+        const eventIncidentId =
+          event.data?.incidentId ?? event.data?.incident?.id;
+        if (event.type.startsWith("incident:") && eventIncidentId === incidentId) {
+          loadDetail();
+        }
+      },
+      [incidentId, loadDetail]
+    )
+  );
 
   const handleApprove = async () => {
     if (!incident) return;

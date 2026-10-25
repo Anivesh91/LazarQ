@@ -2,14 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
   Database,
-  RefreshCw,
   Server,
   Shield,
-  Sliders,
   Zap,
 } from "lucide-react";
 import { Sidebar } from "../../components/Sidebar";
@@ -17,29 +12,69 @@ import { Header } from "../../components/Header";
 import { api } from "../../lib/api";
 import { SystemHealth } from "../../lib/types";
 
+type CircuitBreakerStatus = Awaited<
+  ReturnType<typeof api.getCircuitBreakerStatus>
+>;
+
 export default function SystemPage() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [breaker, setBreaker] = useState<any>(null);
+  const [breaker, setBreaker] = useState<CircuitBreakerStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   const loadSystem = async () => {
-    try {
-      setLoading(true);
-      const h = await api.getHealth();
-      setHealth(h);
-
-      const cb = await api.getCircuitBreakerStatus();
-      setBreaker(cb);
-    } catch (err) {
-      console.error("Failed to load system stats:", err);
-    } finally {
-      setLoading(false);
+    setLoading(true);
+    setBreaker(null);
+    const [healthResult, breakerResult] = await Promise.allSettled([
+      api.getHealth(),
+      api.getCircuitBreakerStatus(),
+    ]);
+    if (healthResult.status === "fulfilled") {
+      setHealth(healthResult.value);
+    } else {
+      setHealth(null);
+      console.error("Failed to load system health:", healthResult.reason);
     }
+    if (
+      breakerResult.status === "fulfilled" &&
+      breakerResult.value.success
+    ) {
+      setBreaker(breakerResult.value);
+    } else {
+      setBreaker(null);
+      if (breakerResult.status === "rejected") {
+        console.error(
+          "Failed to load circuit breaker status:",
+          breakerResult.reason
+        );
+      }
+    }
+    setLoading(false);
   };
 
   useEffect(() => {
     loadSystem();
   }, []);
+
+  const breakerHealthy =
+    breaker !== null &&
+    breaker.success &&
+    breaker.openBreakers === 0 &&
+    breaker.breakers.every((item) => item.state === "CLOSED");
+  const breakerState = breaker
+    ? breaker.openBreakers > 0 ||
+      breaker.breakers.some((item) => item.state === "OPEN")
+      ? "OPEN"
+      : breaker.breakers.some((item) => item.state === "HALF_OPEN")
+      ? "HALF_OPEN"
+      : "CLOSED (HEALTHY)"
+    : loading
+    ? "LOADING"
+    : "UNAVAILABLE";
+  const breakerStatusColor = breakerHealthy
+    ? "text-emerald-300 border-emerald-800 bg-emerald-950/60"
+    : breakerState === "OPEN"
+    ? "text-rose-300 border-rose-800 bg-rose-950/60"
+    : "text-amber-300 border-amber-800 bg-amber-950/60";
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
@@ -69,9 +104,17 @@ export default function SystemPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800 text-xs font-mono font-bold text-emerald-300 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                STATE: {breaker?.status || "CLOSED (HEALTHY)"}
+              <div className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold flex items-center gap-2 ${breakerStatusColor}`}>
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    breakerHealthy
+                      ? "bg-emerald-400 animate-pulse"
+                      : breakerState === "OPEN"
+                      ? "bg-rose-400"
+                      : "bg-amber-400"
+                  }`}
+                />
+                STATE: {breakerState}
               </div>
             </div>
           </div>
@@ -87,7 +130,13 @@ export default function SystemPage() {
                 <Server className="h-4 w-4 text-cyan-400" />
               </div>
               <div className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    health?.redis === "connected"
+                      ? "bg-emerald-400"
+                      : "bg-rose-400"
+                  }`}
+                />
                 <span>{health?.redis === "connected" ? "Operational" : "Disconnected"}</span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
@@ -104,7 +153,13 @@ export default function SystemPage() {
                 <Database className="h-4 w-4 text-indigo-400" />
               </div>
               <div className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    health?.database === "connected"
+                      ? "bg-emerald-400"
+                      : "bg-rose-400"
+                  }`}
+                />
                 <span>{health?.database === "connected" ? "Operational" : "Disconnected"}</span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
@@ -121,7 +176,6 @@ export default function SystemPage() {
                 <Zap className="h-4 w-4 text-amber-400" />
               </div>
               <div className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                 <span>Gemini 3.5-flash-lite</span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
