@@ -14,8 +14,10 @@ const envSchema = z.object({
   ENGINE_API_KEY: z.string().default("dlq_dev_secret_key"),
   LLM_PROVIDER: z.string().default("gemini"),
   LLM_API_KEY: z.string().default(""),
+  LLM_MODEL: z.string().default("gemini-3.5-flash-lite"),
   EMBEDDING_PROVIDER: z.string().default("gemini"),
   EMBEDDING_API_KEY: z.string().default(""),
+  EMBEDDING_MODEL: z.string().default("gemini-embedding-001"),
 });
 
 export const env = envSchema.parse(process.env);

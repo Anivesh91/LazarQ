@@ -2,7 +2,7 @@ import { Worker, Job } from "bullmq";
 import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 import { incidentService } from "../services/incident.service";
-import { ragService } from "../services/rag.service";
+import { triageService } from "../services/triage.service";
 import { IncidentSnapshot } from "@dlq-healer/sdk";
 
 export const INTAKE_QUEUE_NAME = "dlq-healer-intake";
@@ -33,15 +33,15 @@ export function startHealerWorker(): Worker<IncidentSnapshot> {
 
       const result = await incidentService.ingestSnapshot(job.data);
 
-      // Automatically trigger RAG Knowledge Base matching for non-duplicate incidents
-      let ragResult = null;
+      // Automatically trigger RAG + AI Doctor triage for non-duplicate incidents
+      let triageResult = null;
       if (!result.isDuplicate) {
         try {
-          ragResult = await ragService.matchIncident(result.incident.id);
+          triageResult = await triageService.diagnoseIncident(result.incident.id);
         } catch (matchErr: any) {
           logger.error(
             { incidentId: result.incident.id, err: matchErr.message },
-            "[Healer Worker] RAG matching encountered an unexpected error"
+            "[Healer Worker] AI Doctor triage encountered an unexpected error"
           );
         }
       }
@@ -49,8 +49,7 @@ export function startHealerWorker(): Worker<IncidentSnapshot> {
       return {
         incidentId: result.incident.id,
         isDuplicate: result.isDuplicate,
-        status: ragResult ? ragResult.status : result.incident.status,
-        matchedRunbookId: ragResult?.runbook?.id || null,
+        status: triageResult ? triageResult.status : result.incident.status,
       };
     },
     {

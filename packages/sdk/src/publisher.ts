@@ -64,8 +64,10 @@ export class SmartDLQPublisher {
 
     if (this.ownConnection && this.redisClient) {
       try {
-        if (this.redisClient.status !== "end") {
-          await this.redisClient.quit();
+        if (this.redisClient.status === "ready" || this.redisClient.status === "connect") {
+          await this.redisClient.quit().catch(() => {});
+        } else {
+          this.redisClient.disconnect();
         }
       } catch (_) {}
     }

@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { incidentService } from "../services/incident.service";
 import { ragService } from "../services/rag.service";
+import { triageService } from "../services/triage.service";
 import { AppError } from "../middleware/error-handler";
 import { prisma } from "../db/prisma";
 
@@ -152,6 +153,24 @@ incidentRouter.post(
       res.status(200).json({
         success: true,
         incidentId: id,
+        ...result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ── 6. Trigger AI Doctor Triage & Repair Proposal ──
+// POST /api/incidents/:id/diagnose
+incidentRouter.post(
+  "/:id/diagnose",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = getParamId(req);
+      const result = await triageService.diagnoseIncident(id);
+      res.status(200).json({
+        success: true,
         ...result,
       });
     } catch (err) {
