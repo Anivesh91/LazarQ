@@ -69,7 +69,7 @@ model Runbook {
   id        String   @id @default(uuid())
   title     String
   content   String   @db.Text
-  embedding Unsupported("vector(1536)")?
+  embedding Unsupported("vector(768)")?
   tags      String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

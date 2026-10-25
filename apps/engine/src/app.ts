@@ -3,6 +3,7 @@ import cors from "cors";
 import { redis } from "./config/redis";
 import { prisma } from "./db/prisma";
 import { incidentRouter } from "./api/incident.routes";
+import { runbookRouter } from "./api/runbook.routes";
 import { errorHandler } from "./middleware/error-handler";
 
 const app: Express = express();
@@ -41,6 +42,7 @@ app.get("/health", async (_req, res) => {
 
 // ── API Routes ──
 app.use("/api/incidents", incidentRouter);
+app.use("/api/runbooks", runbookRouter);
 
 // ── Global Error Handler ──
 app.use(errorHandler);
