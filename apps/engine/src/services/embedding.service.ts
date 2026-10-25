@@ -30,16 +30,23 @@ export class GeminiEmbeddingService implements IEmbeddingService {
       throw new AppError("Text cannot be empty for embedding generation", 400);
     }
 
+    // Guard against token limit exhaustion on large stack traces or payloads
+    const MAX_EMBEDDING_CHARS = 8000;
+    const safeText =
+      sanitizedText.length > MAX_EMBEDDING_CHARS
+        ? sanitizedText.slice(0, MAX_EMBEDDING_CHARS)
+        : sanitizedText;
+
     // In testing or when no real API key is configured, fallback to deterministic 768-dim mock
     if (!this.client) {
       logger.warn("Gemini API key not configured; returning mock 768-dim embedding");
-      return this.generateMockEmbedding(sanitizedText);
+      return this.generateMockEmbedding(safeText);
     }
 
     try {
       const response = await this.client.models.embedContent({
         model: this.modelName,
-        contents: sanitizedText,
+        contents: safeText,
         config: {
           outputDimensionality: this.dimensions,
         },

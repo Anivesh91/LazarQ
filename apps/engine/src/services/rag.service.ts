@@ -65,13 +65,17 @@ export class RAGService {
       limit
     );
 
-    return rawResults.map((row) => ({
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      tags: row.tags || [],
-      similarity: parseFloat(Number(row.similarity).toFixed(4)),
-    }));
+    return rawResults.map((row) => {
+      const rawSim = Number(row.similarity);
+      const similarity = isNaN(rawSim) ? 0 : parseFloat(rawSim.toFixed(4));
+      return {
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        tags: row.tags || [],
+        similarity,
+      };
+    });
   }
 
   /**

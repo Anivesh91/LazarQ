@@ -11,6 +11,20 @@ export interface TriageResult {
   proposedPayload: Record<string, any> | null;
 }
 
+function applyMutation(payload: Record<string, any>, field: string, to: any): void {
+  if (!field) return;
+  const parts = field.split(".");
+  let curr = payload;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (!(key in curr) || typeof curr[key] !== "object" || curr[key] === null) {
+      curr[key] = {};
+    }
+    curr = curr[key];
+  }
+  curr[parts[parts.length - 1]] = to;
+}
+
 export class TriageService {
   /**
    * Diagnoses an incident by retrieving Runbook knowledge and synthesizing a structured LLM proposal.
@@ -67,16 +81,22 @@ export class TriageService {
 
       // Step 3: Compute mutated proposed payload
       let proposedPayload: Record<string, any> | null = null;
+      const basePayload =
+        typeof incident.payloadSnapshot === "object" && incident.payloadSnapshot !== null
+          ? incident.payloadSnapshot
+          : {};
 
       if (proposal.action === "MUTATE_AND_RETRY") {
-        proposedPayload = JSON.parse(JSON.stringify(incident.payloadSnapshot));
-        for (const mut of proposal.mutations) {
-          if (mut.field && proposedPayload) {
-            proposedPayload[mut.field] = mut.to;
+        proposedPayload = JSON.parse(JSON.stringify(basePayload));
+        if (proposedPayload) {
+          for (const mut of proposal.mutations) {
+            if (mut.field) {
+              applyMutation(proposedPayload, mut.field, mut.to);
+            }
           }
         }
       } else if (proposal.action === "RETRY") {
-        proposedPayload = JSON.parse(JSON.stringify(incident.payloadSnapshot));
+        proposedPayload = JSON.parse(JSON.stringify(basePayload));
       } else {
         proposedPayload = null;
       }
