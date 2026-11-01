@@ -36,10 +36,11 @@ export default function OverviewPage() {
       const incidentsRequest = api
         .getIncidents({ limit: 15 })
         .then((data) => {
-          setIncidents(data.incidents);
+          const list = data?.incidents || [];
+          setIncidents(list);
           setStats((current) => ({
             ...current,
-            total: data.pagination.total || data.incidents.length,
+            total: data?.pagination?.total ?? list.length,
           }));
         })
         .catch((err) => {
@@ -193,7 +194,7 @@ export default function OverviewPage() {
                           </div>
                         </td>
                       </tr>
-                    ) : incidents.length === 0 ? (
+                    ) : (incidents || []).length === 0 ? (
                       <tr>
                         <td
                           colSpan={4}

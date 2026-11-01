@@ -6,6 +6,22 @@ import { redisConnection } from "./config/redis";
 const app = express();
 app.use(express.json());
 
+// ── Root Info Endpoint ──
+app.get("/", (_req: Request, res: Response) => {
+  res.json({
+    service: "DLQ-Healer Playground Producer API",
+    port: 4000,
+    status: "online",
+    message: "This is the headless Playground REST API. For the visual UI Recovery Cockpit, visit the dashboard.",
+    dashboardUrl: "http://localhost:3000",
+    endpoints: {
+      health: "GET /health",
+      queueStatus: "GET /queue/status",
+      createOrder: "POST /orders",
+    },
+  });
+});
+
 // ── Health Check ──
 app.get("/health", async (_req: Request, res: Response) => {
   try {

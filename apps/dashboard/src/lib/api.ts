@@ -59,9 +59,28 @@ export const api = {
     if (params.limit) searchParams.set("limit", String(params.limit));
 
     const query = searchParams.toString();
-    return fetchJSON(`/incidents${query ? `?${query}` : ""}`, {
+    const result = await fetchJSON<{
+      items?: Incident[];
+      incidents?: Incident[];
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+      };
+    }>(`/incidents${query ? `?${query}` : ""}`, {
       signal: params.signal,
     });
+
+    return {
+      incidents: result.incidents || result.items || [],
+      pagination: result.pagination || {
+        page: 1,
+        limit: 20,
+        total: (result.incidents || result.items || []).length,
+        totalPages: 1,
+      },
+    };
   },
 
   /**

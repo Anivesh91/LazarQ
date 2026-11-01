@@ -45,8 +45,8 @@ export default function IncidentsPage() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      setIncidents(data.incidents);
-      setTotalPages(data.pagination.totalPages || 1);
+      setIncidents(data?.incidents || []);
+      setTotalPages(data?.pagination?.totalPages || 1);
     } catch (err) {
       if (!controller.signal.aborted) {
         console.error("Failed to load incidents:", err);
