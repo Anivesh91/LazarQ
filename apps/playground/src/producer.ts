@@ -83,8 +83,8 @@ app.post("/orders", async (req: Request, res: Response) => {
 
 const PORT = process.env.PLAYGROUND_PORT || 4000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[Playground API] Producer listening on http://localhost:${PORT}`);
 });
 
-export { app };
+export { app, server };

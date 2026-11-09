@@ -12,6 +12,7 @@
     "demo": "pnpm --filter @dlq-healer/playground demo",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },

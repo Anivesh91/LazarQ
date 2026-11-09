@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/producer.ts",
+    "dev": "tsx watch src/dev.ts",
+    "producer": "tsx watch src/producer.ts",
     "worker": "tsx watch src/workers/order.worker.ts",
     "seed": "tsx src/seed-jobs.ts",
     "demo": "tsx src/demo-self-heal.ts",

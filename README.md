@@ -192,10 +192,10 @@ docker compose up -d
 
 ### 5. Run Database Migrations & Seed SOP Runbooks
 ```bash
-pnpm db:push
+pnpm db:migrate:deploy
 pnpm --filter @dlq-healer/engine seed:runbooks
 ```
-*Seeds standard troubleshooting Runbooks with 768-dimensional vector embeddings.*
+*Applies Prisma PostgreSQL/pgvector migrations (or use `pnpm db:push` during rapid schema prototyping) and seeds standard troubleshooting Runbooks with 768-dimensional vector embeddings.*
 
 ---
 
