@@ -163,7 +163,7 @@ export default function SystemPage() {
                 <span>{health?.database === "connected" ? "Operational" : "Disconnected"}</span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
-                Port 5432 • 768-dim vector embeddings
+                Port 5432 • {health?.embeddingModel || "768-dim vector embeddings"}
               </p>
             </div>
 
@@ -175,10 +175,13 @@ export default function SystemPage() {
                 </span>
                 <Zap className="h-4 w-4 text-amber-400" />
               </div>
-              <div className="text-xl font-bold text-white flex items-center gap-2">
-                <span>Gemini 3.5-flash-lite</span>
+              <div className="text-xl font-bold text-white flex items-center gap-2 truncate">
+                <span className="truncate">
+                  {health?.llmModel || (loading ? "Loading..." : "Unavailable")}
+                </span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
+                {health?.llmProvider ? `${health.llmProvider} • ` : ""}
                 Structured JSON mode • Bounded backoff
               </p>
             </div>

@@ -1,6 +1,7 @@
 import express, { Express } from "express";
 import cors from "cors";
 import { redis } from "./config/redis";
+import { env } from "./config/env";
 import { prisma } from "./db/prisma";
 import { incidentRouter } from "./api/incident.routes";
 import { runbookRouter } from "./api/runbook.routes";
@@ -40,6 +41,9 @@ app.get("/health", async (_req, res) => {
     status: isHealthy ? "ok" : "degraded",
     redis: redisStatus,
     database: dbStatus,
+    llmProvider: env.LLM_PROVIDER,
+    llmModel: env.LLM_MODEL,
+    embeddingModel: env.EMBEDDING_MODEL,
     timestamp: new Date().toISOString(),
   });
 });

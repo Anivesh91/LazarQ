@@ -1,18 +1,20 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
   AlertOctagon,
   BookOpen,
+  LogOut,
   Radio,
   Sliders,
   Sparkles,
   Zap,
 } from "lucide-react";
 import { ConnectionStatus } from "../lib/use-sse";
+import { useSystemHealth } from "../lib/use-health";
 
 interface SidebarProps {
   sseStatus?: ConnectionStatus;
@@ -24,6 +26,42 @@ export function Sidebar({
   pendingApprovalsCount = 0,
 }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { health } = useSystemHealth();
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/operator/session", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { authEnabled?: boolean } | null) => {
+        if (active && data?.authEnabled) {
+          setAuthEnabled(true);
+        }
+      })
+      .catch(() => {
+        // Ignore session discovery failures when offline
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      setSigningOut(true);
+      await fetch("/api/operator/session", { method: "DELETE" });
+      router.replace("/login");
+      router.refresh();
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
+  const doctorModelLabel =
+    health?.llmModel ||
+    (health === null ? "Checking model..." : "Engine offline");
 
   const navItems = [
     {
@@ -142,10 +180,26 @@ export function Sidebar({
         {/* AI Doctor Badge */}
         <div className="px-3 py-2 rounded-lg bg-indigo-950/20 border border-indigo-900/40 flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-          <span className="text-[11px] text-indigo-300 font-medium">
-            Doctor: Gemini 3.5-flash-lite
+          <span
+            className="text-[11px] text-indigo-300 font-medium truncate"
+            title={doctorModelLabel}
+          >
+            Doctor: {doctorModelLabel}
           </span>
         </div>
+
+        {/* Sign Out Button (shown when operator session auth is enabled) */}
+        {authEnabled && (
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-900/80 hover:bg-rose-950/50 border border-slate-800 hover:border-rose-900/60 text-xs font-medium text-slate-300 hover:text-rose-200 transition-colors disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>{signingOut ? "Signing out..." : "Sign Out"}</span>
+          </button>
+        )}
       </div>
     </aside>
   );

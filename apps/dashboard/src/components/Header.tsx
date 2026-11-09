@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Database, Server, RefreshCw } from "lucide-react";
-import { api } from "../lib/api";
-import { SystemHealth } from "../lib/types";
+import { useSystemHealth } from "../lib/use-health";
 
 interface HeaderProps {
   title: string;
@@ -18,27 +17,7 @@ export function Header({
   onRefresh,
   isRefreshing = false,
 }: HeaderProps) {
-  const [health, setHealth] = useState<SystemHealth | null>(null);
-
-  useEffect(() => {
-    async function checkHealth() {
-      try {
-        const data = await api.getHealth();
-        setHealth(data);
-      } catch {
-        setHealth({
-          status: "degraded",
-          redis: "error",
-          database: "error",
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    checkHealth();
-    const interval = setInterval(checkHealth, 15000);
-    return () => clearInterval(interval);
-  }, []);
+  const { health } = useSystemHealth();
 
   return (
     <header className="border-b border-slate-900 bg-slate-950/60 backdrop-blur-md px-8 py-5 flex items-center justify-between sticky top-0 z-10">

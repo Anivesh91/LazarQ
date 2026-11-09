@@ -19,6 +19,15 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
+    if (
+      res.status === 401 &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/login"
+    ) {
+      const next = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    }
+
     let errorMsg = `HTTP Error ${res.status}: ${res.statusText}`;
     try {
       const errorBody = await res.json();

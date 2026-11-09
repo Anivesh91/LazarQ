@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createOperatorSession,
+  isAuthorizedOperatorSession,
+  isOperatorAuthEnabled,
   OPERATOR_SESSION_COOKIE,
   OPERATOR_SESSION_MAX_AGE,
   isValidOperatorPassword,
 } from "../../../../lib/operator-session";
+
+export async function GET(request: NextRequest) {
+  const response = NextResponse.json({
+    authEnabled: isOperatorAuthEnabled(),
+    authenticated: isAuthorizedOperatorSession(request),
+  });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
 
 export async function POST(request: NextRequest) {
   if (

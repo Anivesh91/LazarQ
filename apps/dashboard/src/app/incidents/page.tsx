@@ -23,6 +23,7 @@ export default function IncidentsPage() {
   const [queueSearch, setQueueSearch] = useState<string>("");
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const requestController = useRef<AbortController | null>(null);
 
@@ -41,8 +42,10 @@ export default function IncidentsPage() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      setIncidents(data?.incidents || []);
+      const list = data?.incidents || [];
+      setIncidents(list);
       setTotalPages(data?.pagination?.totalPages || 1);
+      setTotalCount(data?.pagination?.total ?? list.length);
     } catch (err) {
       if (!controller.signal.aborted) {
         console.error("Failed to load incidents:", err);
@@ -162,7 +165,7 @@ export default function IncidentsPage() {
             </div>
 
             <span className="text-xs text-slate-400 font-mono">
-              Total {incidents.length} Records
+              Total {totalCount} {totalCount === 1 ? "Record" : "Records"}
             </span>
           </div>
 

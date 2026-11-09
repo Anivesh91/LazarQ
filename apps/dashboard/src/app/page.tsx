@@ -300,7 +300,7 @@ export default function OverviewPage() {
               </div>
 
               <div className="pt-4 border-t border-slate-900 mt-4 text-[11px] text-slate-500 flex items-center justify-between">
-                <span>Autonomous Engine Engine v0.3</span>
+                <span>LazarQ Engine v1.0</span>
                 <span
                   className={`font-medium flex items-center gap-1 ${
                     sseStatus === "connected"

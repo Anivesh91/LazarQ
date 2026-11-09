@@ -1,29 +1,26 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 
 export const OPERATOR_SESSION_COOKIE = "dlq-operator-session";
 export const OPERATOR_SESSION_MAX_AGE = 8 * 60 * 60;
 
-function getSessionSecret(): string | null {
+function getOperatorSessionSecret(): string | null {
   const secret = process.env.DASHBOARD_SESSION_SECRET;
   return secret && secret.length >= 32 ? secret : null;
+}
+
+export function isOperatorAuthEnabled(): boolean {
+  return Boolean(
+    process.env.DASHBOARD_OPERATOR_PASSWORD && getOperatorSessionSecret()
+  );
 }
 
 function signExpiry(expiry: string, secret: string): string {
   return createHmac("sha256", secret).update(expiry).digest("base64url");
 }
 
-export function isOperatorAuthEnabled(): boolean {
-  const secret = process.env.DASHBOARD_SESSION_SECRET;
-  return Boolean(
-    process.env.DASHBOARD_OPERATOR_PASSWORD &&
-    secret &&
-    secret.length >= 32
-  );
-}
-
 export function createOperatorSession(): string | null {
-  const secret = getSessionSecret();
+  const secret = getOperatorSessionSecret();
   if (!secret) return null;
 
   const expiry = String(Math.floor(Date.now() / 1000) + OPERATOR_SESSION_MAX_AGE);
@@ -36,7 +33,7 @@ export function isAuthorizedOperatorSession(request: NextRequest): boolean {
     return true;
   }
 
-  const secret = getSessionSecret();
+  const secret = getOperatorSessionSecret();
   const token = request.cookies.get(OPERATOR_SESSION_COOKIE)?.value;
   if (!secret || !token) return false;
 

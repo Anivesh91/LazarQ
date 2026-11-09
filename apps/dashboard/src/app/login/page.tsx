@@ -2,6 +2,7 @@
 
 import React, { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { sanitizeNextPath } from "../../lib/operator-session-edge";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,7 +24,11 @@ export default function LoginPage() {
         const result = await response.json();
         throw new Error(result.message || "Unable to sign in");
       }
-      router.replace("/");
+      const nextParam =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("next")
+          : null;
+      router.replace(sanitizeNextPath(nextParam));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to sign in");
@@ -58,7 +63,11 @@ export default function LoginPage() {
             className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-500"
           />
         </div>
-        {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-rose-400">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={submitting}

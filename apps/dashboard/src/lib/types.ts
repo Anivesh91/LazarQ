@@ -113,6 +113,9 @@ export interface SystemHealth {
   status: "ok" | "degraded";
   redis: string;
   database: string;
+  llmProvider?: string;
+  llmModel?: string;
+  embeddingModel?: string;
   timestamp: string;
 }
 
