@@ -60,7 +60,7 @@ export function Sidebar({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-bold text-white text-base tracking-tight">
-                DLQ-Healer
+                LazarQ
               </span>
               <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/60">
                 v1.0

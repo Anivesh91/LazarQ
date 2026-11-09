@@ -12,7 +12,7 @@ import { prisma } from "./db/prisma";
 const PORT = env.ENGINE_PORT;
 
 const server = app.listen(PORT, () => {
-  logger.info(`🚀 DLQ-Healer Engine API running on http://localhost:${PORT}`);
+  logger.info(`🚀 LazarQ Engine API running on http://localhost:${PORT}`);
   // Start the background intake consumer worker
   startHealerWorker();
 });

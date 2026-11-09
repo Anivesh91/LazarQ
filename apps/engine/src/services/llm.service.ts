@@ -104,7 +104,7 @@ export class LLMService {
       return this.generateMockProposal(input);
     }
 
-    const systemPrompt = `You are DLQ-Healer AI Doctor, an automated Site Reliability Engineer (SRE) and failure recovery specialist.
+    const systemPrompt = `You are LazarQ AI Doctor, an automated Site Reliability Engineer (SRE) and failure recovery specialist.
 Analyze the following terminal BullMQ job failure and the matched troubleshooting Runbook (SOP).
 Your goal is to propose a safe, deterministic remediation strategy.
 

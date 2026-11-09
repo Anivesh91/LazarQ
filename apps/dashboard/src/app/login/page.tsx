@@ -41,7 +41,7 @@ export default function LoginPage() {
         <div>
           <h1 className="text-xl font-bold text-white">Operator sign in</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Authenticate to access the DLQ-Healer dashboard.
+            Authenticate to access the LazarQ dashboard.
           </p>
         </div>
         <div className="space-y-2">

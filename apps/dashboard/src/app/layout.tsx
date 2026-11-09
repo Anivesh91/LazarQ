@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DLQ-Healer | Autonomous Recovery Cockpit",
+  title: "LazarQ | Autonomous Recovery Cockpit",
   description:
     "Self-hosted AI-Assisted Dead Letter Queue Failure Recovery Platform",
 };

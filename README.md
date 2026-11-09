@@ -1,18 +1,18 @@
-# DLQ-Healer 🛡️⚡
+# LazarQ 🛡️⚡
 
 > **Self-Hosted, AI-Assisted Queue Failure Recovery Platform**  
 > Automatically captures terminal BullMQ failures, matches remediation runbooks via vector embeddings (`pgvector`), diagnoses root causes using Google Gemini, validates mutations through a 5-stage deterministic sandbox gate, executes controlled replays, and streams real-time updates to an operational recovery cockpit.
 
 ---
 
-## 🌟 Overview & Why DLQ-Healer?
+## 🌟 Overview & Why LazarQ?
 
 In distributed asynchronous systems, Dead Letter Queues (DLQs) frequently become **graveyards of lost customer revenue**:
 - **Transient Glitches** (e.g., downstream Twilio/Stripe rate limits) stall orders that could easily succeed with backoff or fallback channels.
 - **Payload Schema Bugs** (e.g., missing fields from legacy API clients) sit abandoned because diagnosing each failure requires manual log correlation and database surgery.
 - **Manual Retries Are Dangerous**: Blindly replaying poisoned jobs can trigger cascading failure storms, double-charge customers, or corrupt immutable identifiers.
 
-**DLQ-Healer** transforms dead-letter queues into an **autonomous self-healing recovery loop** governed by strict safety invariants:
+**LazarQ** transforms dead-letter queues into an **autonomous self-healing recovery loop** governed by strict safety invariants:
 
 ```text
 ┌─────────────────┐      Terminal Failure       ┌────────────────────────┐
@@ -104,7 +104,7 @@ Before any AI-generated proposal can be approved or replayed, it must pass throu
 ## 📦 Monorepo Structure
 
 ```text
-dlq-healer/
+lazarQ/
 ├── apps/
 │   ├── engine/                    # Core Healer Engine (Express + BullMQ + Prisma)
 │   │   ├── src/
@@ -153,8 +153,8 @@ dlq-healer/
 
 ### 2. Clone & Install
 ```bash
-git clone https://github.com/Anivesh91/DLQ-healer.git
-cd dlq-healer
+git clone https://github.com/Anivesh91/lazarQ.git
+cd lazarQ
 pnpm install
 ```
 
@@ -265,7 +265,7 @@ All protected endpoints require the `x-api-key` header (configured via `ENGINE_A
 
 ## 🧪 Automated Test Suite
 
-DLQ-Healer maintains rigorous test coverage spanning unit, integration, and full end-to-end scenarios:
+LazarQ maintains rigorous test coverage spanning unit, integration, and full end-to-end scenarios:
 
 ```bash
 pnpm test
@@ -296,11 +296,11 @@ Total Tests: 79 total (73 Engine, 6 SDK)
 ## 🔍 Honest Limitations & Production Considerations
 
 1. **At-Least-Once Delivery**: BullMQ operates on at-least-once delivery semantics. Consumer workers must design idempotency handlers using external unique constraints (e.g. idempotency keys on payment transactions).
-2. **LLM Hallucinations vs. Deterministic Gates**: LLMs are creative by design. DLQ-Healer prevents rogue mutations by strictly subordinating LLM proposals to the **5-Stage Deterministic Sandbox Gate**. If an LLM suggests changing an order amount or fabricating an ID, the gate immediately marks the proposal `SANDBOX_FAILED`.
+2. **LLM Hallucinations vs. Deterministic Gates**: LLMs are creative by design. LazarQ prevents rogue mutations by strictly subordinating LLM proposals to the **5-Stage Deterministic Sandbox Gate**. If an LLM suggests changing an order amount or fabricating an ID, the gate immediately marks the proposal `SANDBOX_FAILED`.
 3. **Dual-Write Concurrency**: To prevent race conditions where a fast worker completes a replayed job before the database records the attempt, the Engine persists the `IN_PROGRESS` attempt record *before* enqueuing to BullMQ.
 4. **Single-Node vs. Clustered Redis**: Dynamic queue reinjection pools connections per queue. In a multi-tenant Redis Cluster setup, queue key hashing tags (`{queue-name}`) should be enforced across BullMQ configurations.
 
 ---
 
 ## 📄 License
-MIT © 2026 DLQ-Healer Contributors.
+MIT © 2026 LazarQ Contributors.

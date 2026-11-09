@@ -70,7 +70,7 @@ function cleanupDemo(): Promise<void> {
 }
 
 async function runDemoSteps() {
-  printBanner("DLQ-HEALER // AUTONOMOUS RECOVERY PLATFORM — LIVE DEMO");
+  printBanner("LAZARQ // AUTONOMOUS RECOVERY PLATFORM — LIVE DEMO");
 
   // ── STEP 1: Infrastructure & Knowledge Base Initialization ──
   printStep("STEP 1/7", "VERIFYING INFRASTRUCTURE & KNOWLEDGE BASE");

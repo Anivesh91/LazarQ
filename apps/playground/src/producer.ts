@@ -9,7 +9,7 @@ app.use(express.json());
 // ── Root Info Endpoint ──
 app.get("/", (_req: Request, res: Response) => {
   res.json({
-    service: "DLQ-Healer Playground Producer API",
+    service: "LazarQ Playground Producer API",
     port: 4000,
     status: "online",
     message: "This is the headless Playground REST API. For the visual UI Recovery Cockpit, visit the dashboard.",

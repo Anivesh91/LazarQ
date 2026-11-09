@@ -61,7 +61,7 @@ export class EventBroadcasterService {
     const initialPayload: BroadcastEvent = {
       type: "connected",
       data: {
-        message: "Connected to DLQ-Healer live event stream",
+        message: "Connected to LazarQ live event stream",
         clientCount: this.clients.size + 1,
       },
       timestamp: new Date().toISOString(),
