@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import {
   Database,
+  Pencil,
   Plus,
   Sparkles,
   Trash2,
@@ -17,24 +18,35 @@ export default function RunbooksPage() {
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedRunbook, setSelectedRunbook] = useState<Runbook | null>(null);
-  const [isCreating, setIsCreating] = useState<boolean>(false);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [editingRunbook, setEditingRunbook] = useState<Runbook | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Form State
-  const [newTitle, setNewTitle] = useState("");
-  const [newContent, setNewContent] = useState("");
-  const [newTags, setNewTags] = useState("");
+  const [titleInput, setTitleInput] = useState("");
+  const [contentInput, setContentInput] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
 
-  const loadRunbooks = async () => {
+  const loadRunbooks = async (preferredId?: string) => {
     try {
       setLoading(true);
       const data = await api.getRunbooks();
       setRunbooks(data);
-      setSelectedRunbook((current) =>
-        data.find((runbook) => runbook.id === current?.id) ?? data[0] ?? null
-      );
+      setSelectedRunbook((current) => {
+        const targetId = preferredId ?? current?.id;
+        return data.find((runbook) => runbook.id === targetId) ?? data[0] ?? null;
+      });
     } catch (err) {
       console.error("Failed to load runbooks:", err);
+      setFeedback({
+        type: "error",
+        message: "Failed to load runbooks from Engine.",
+      });
     } finally {
       setLoading(false);
     }
@@ -44,37 +56,90 @@ export default function RunbooksPage() {
     loadRunbooks();
   }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingRunbook(null);
+    setTitleInput("");
+    setContentInput("");
+    setTagsInput("");
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (runbook: Runbook) => {
+    setEditingRunbook(runbook);
+    setTitleInput(runbook.title);
+    setContentInput(runbook.content);
+    setTagsInput(runbook.tags.join(", "));
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    if (saving) return;
+    setIsModalOpen(false);
+    setEditingRunbook(null);
+    setFormError(null);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newContent.trim()) {
-      alert("Title and content are required");
+    const trimmedTitle = titleInput.trim();
+    const trimmedContent = contentInput.trim();
+    if (!trimmedTitle || !trimmedContent) {
+      setFormError("Title and remediation SOP content are required.");
       return;
     }
 
     try {
       setSaving(true);
-      const tagsArray = newTags
+      setFormError(null);
+      const tagsArray = tagsInput
         .split(",")
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
 
-      const res = await api.createRunbook({
-        title: newTitle.trim(),
-        content: newContent.trim(),
-        tags: tagsArray,
-      });
+      if (editingRunbook) {
+        const contentChanged =
+          trimmedTitle !== editingRunbook.title ||
+          trimmedContent !== editingRunbook.content;
 
-      alert("Runbook created and vectorized with Gemini 768-dim embeddings!");
-      setIsCreating(false);
-      setNewTitle("");
-      setNewContent("");
-      setNewTags("");
+        const res = await api.updateRunbook(editingRunbook.id, {
+          title: trimmedTitle,
+          content: trimmedContent,
+          tags: tagsArray,
+        });
 
-      await loadRunbooks();
-      setSelectedRunbook(res.data);
+        setIsModalOpen(false);
+        setEditingRunbook(null);
+        await loadRunbooks(res.data.id);
+        setSelectedRunbook(res.data);
+        setFeedback({
+          type: "success",
+          message: contentChanged
+            ? "Runbook updated and re-vectorized with 768-dim embeddings."
+            : "Runbook tags updated cleanly.",
+        });
+      } else {
+        const res = await api.createRunbook({
+          title: trimmedTitle,
+          content: trimmedContent,
+          tags: tagsArray,
+        });
+
+        setIsModalOpen(false);
+        setTitleInput("");
+        setContentInput("");
+        setTagsInput("");
+        await loadRunbooks(res.data.id);
+        setSelectedRunbook(res.data);
+        setFeedback({
+          type: "success",
+          message: "Runbook created and vectorized with Gemini 768-dim embeddings.",
+        });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      alert(`Failed to save runbook: ${msg}`);
+      setFormError(`Failed to save runbook: ${msg}`);
     } finally {
       setSaving(false);
     }
@@ -89,9 +154,16 @@ export default function RunbooksPage() {
       await api.deleteRunbook(id);
       setSelectedRunbook(null);
       await loadRunbooks();
+      setFeedback({
+        type: "success",
+        message: `Deleted runbook "${title}".`,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      alert(`Delete failed: ${msg}`);
+      setFeedback({
+        type: "error",
+        message: `Delete failed: ${msg}`,
+      });
     }
   };
 
@@ -103,11 +175,31 @@ export default function RunbooksPage() {
         <Header
           title="Runbook Knowledge Base & RAG Studio"
           description="Vectorized Standard Operating Procedures (SOPs) matched by pgvector cosine search"
-          onRefresh={loadRunbooks}
+          onRefresh={() => loadRunbooks()}
           isRefreshing={loading}
         />
 
         <main className="p-8 space-y-6 flex-1 max-w-7xl">
+          {feedback && (
+            <div
+              className={`px-4 py-3 rounded-xl border text-xs flex items-center justify-between ${
+                feedback.type === "success"
+                  ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-200"
+                  : "bg-rose-950/40 border-rose-800/60 text-rose-200"
+              }`}
+            >
+              <span>{feedback.message}</span>
+              <button
+                type="button"
+                onClick={() => setFeedback(null)}
+                className="text-slate-400 hover:text-white ml-4"
+                aria-label="Dismiss notification"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {/* Header Banner with Create Button */}
           <div className="p-5 rounded-xl border border-cyan-950/60 bg-gradient-to-r from-cyan-950/30 to-indigo-950/30 flex items-center justify-between">
             <div className="space-y-1">
@@ -123,7 +215,7 @@ export default function RunbooksPage() {
             </div>
 
             <button
-              onClick={() => setIsCreating(true)}
+              onClick={openCreateModal}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-md transition-colors"
             >
               <Plus className="h-4 w-4" />
@@ -179,25 +271,44 @@ export default function RunbooksPage() {
             <div className="lg:col-span-2 rounded-xl border border-slate-900 bg-slate-950/60 p-6 flex flex-col justify-between">
               {selectedRunbook ? (
                 <div className="space-y-4">
-                  <div className="border-b border-slate-900 pb-4 flex items-start justify-between">
+                  <div className="border-b border-slate-900 pb-4 flex items-start justify-between gap-4">
                     <div>
                       <h2 className="text-lg font-bold text-white">
                         {selectedRunbook.title}
                       </h2>
-                      <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 font-mono">
+                      <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-400 font-mono">
                         <span>ID: {selectedRunbook.id}</span>
                         <span>•</span>
                         <span>Embed: gemini-embedding-001 (768d)</span>
+                        <span>•</span>
+                        <span>
+                          Updated:{" "}
+                          {new Date(selectedRunbook.updatedAt).toLocaleString()}
+                        </span>
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => handleDelete(selectedRunbook.id, selectedRunbook.title)}
-                      className="p-2 rounded-lg bg-slate-900 hover:bg-rose-950/60 border border-slate-800 hover:border-rose-900/60 text-slate-400 hover:text-rose-300 transition-colors"
-                      title="Delete Runbook"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(selectedRunbook)}
+                        className="p-2 rounded-lg bg-slate-900 hover:bg-cyan-950/60 border border-slate-800 hover:border-cyan-800/60 text-slate-400 hover:text-cyan-300 transition-colors"
+                        title="Edit Runbook"
+                        aria-label="Edit Runbook"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(selectedRunbook.id, selectedRunbook.title)}
+                        className="p-2 rounded-lg bg-slate-900 hover:bg-rose-950/60 border border-slate-800 hover:border-rose-900/60 text-slate-400 hover:text-rose-300 transition-colors"
+                        title="Delete Runbook"
+                        aria-label="Delete Runbook"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Content Preview */}
@@ -220,26 +331,37 @@ export default function RunbooksPage() {
         </main>
       </div>
 
-      {/* Create Runbook Modal */}
-      {isCreating && (
+      {/* Create / Edit Runbook Modal */}
+      {isModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-2xl rounded-xl border border-slate-800 bg-slate-900 p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-cyan-400" />
                 <h3 className="text-base font-bold text-white">
-                  Add New Troubleshooting SOP Runbook
+                  {editingRunbook
+                    ? "Edit Troubleshooting SOP Runbook"
+                    : "Add New Troubleshooting SOP Runbook"}
                 </h3>
               </div>
               <button
-                onClick={() => setIsCreating(false)}
-                className="text-slate-400 hover:text-white"
+                type="button"
+                onClick={closeModal}
+                disabled={saving}
+                className="text-slate-400 hover:text-white disabled:opacity-50"
+                aria-label="Close modal"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-4 text-xs">
+            {formError && (
+              <div className="px-3 py-2 rounded-lg bg-rose-950/50 border border-rose-800/70 text-xs text-rose-200">
+                {formError}
+              </div>
+            )}
+
+            <form onSubmit={handleSave} className="space-y-4 text-xs">
               <div>
                 <label htmlFor="runbook-title" className="block text-slate-400 font-medium mb-1">
                   Runbook Title
@@ -248,8 +370,8 @@ export default function RunbooksPage() {
                   id="runbook-title"
                   type="text"
                   placeholder="e.g., Stripe API 429 Rate Limit Remediation"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
+                  value={titleInput}
+                  onChange={(e) => setTitleInput(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 focus:outline-none focus:border-cyan-500"
                   required
                 />
@@ -263,8 +385,8 @@ export default function RunbooksPage() {
                   id="runbook-tags"
                   type="text"
                   placeholder="e.g., stripe, rate-limit, payment, transient"
-                  value={newTags}
-                  onChange={(e) => setNewTags(e.target.value)}
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 focus:outline-none focus:border-cyan-500"
                 />
               </div>
@@ -277,8 +399,8 @@ export default function RunbooksPage() {
                   id="runbook-content"
                   rows={8}
                   placeholder={`### Diagnosis\nExplain what causes this failure...\n\n### Remediation Directive\nPrescribe RETRY with 60s delay or MUTATE_AND_RETRY...`}
-                  value={newContent}
-                  onChange={(e) => setNewContent(e.target.value)}
+                  value={contentInput}
+                  onChange={(e) => setContentInput(e.target.value)}
                   className="w-full p-3 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
                   required
                 />
@@ -286,14 +408,17 @@ export default function RunbooksPage() {
 
               <div className="flex items-center justify-between pt-2">
                 <span className="text-[11px] text-slate-500">
-                  ⚡ Auto-embeds 768-dim vector into pgvector on save
+                  {editingRunbook
+                    ? "⚡ Re-embeds 768-dim vector when title or content changes"
+                    : "⚡ Auto-embeds 768-dim vector into pgvector on save"}
                 </span>
 
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsCreating(false)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium"
+                    onClick={closeModal}
+                    disabled={saving}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -302,7 +427,13 @@ export default function RunbooksPage() {
                     disabled={saving}
                     className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold disabled:opacity-50"
                   >
-                    {saving ? "Vectorizing..." : "Save Runbook"}
+                    {saving
+                      ? editingRunbook
+                        ? "Updating..."
+                        : "Vectorizing..."
+                      : editingRunbook
+                      ? "Update Runbook"
+                      : "Save Runbook"}
                   </button>
                 </div>
               </div>

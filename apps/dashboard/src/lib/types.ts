@@ -74,9 +74,19 @@ export interface Incident {
   aiDiagnosis?: AiDiagnosis | null;
   proposedPayload?: Record<string, unknown> | null;
   validationResult?: ValidationResult | null;
+  auditLogs?: AuditLogEntry[];
   occurredAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  incidentId?: string | null;
+  action: string;
+  actor: string;
+  details?: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface Runbook {

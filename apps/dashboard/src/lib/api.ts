@@ -1,4 +1,10 @@
-import { Incident, Runbook, SystemHealth, RecoveryAttempt } from "./types";
+import {
+  AuditLogEntry,
+  Incident,
+  RecoveryAttempt,
+  Runbook,
+  SystemHealth,
+} from "./types";
 
 const ENGINE_BASE_URL = "/api/engine";
 
@@ -102,6 +108,17 @@ export const api = {
   },
 
   /**
+   * Get chronological audit log events for an incident
+   */
+  async getIncidentHistory(id: string): Promise<{
+    incidentId: string;
+    totalEvents: number;
+    history: AuditLogEntry[];
+  }> {
+    return fetchJSON(`/incidents/${encodeURIComponent(id)}/history`);
+  },
+
+  /**
    * Approve a proposed repair and trigger replay
    */
   async approveIncident(
@@ -152,6 +169,23 @@ export const api = {
   }): Promise<{ success: boolean; data: Runbook }> {
     return fetchJSON("/runbooks", {
       method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
+   * Update an existing Runbook (re-embeds if title or content changes)
+   */
+  async updateRunbook(
+    id: string,
+    data: {
+      title?: string;
+      content?: string;
+      tags?: string[];
+    }
+  ): Promise<{ success: boolean; data: Runbook }> {
+    return fetchJSON(`/runbooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
       body: JSON.stringify(data),
     });
   },

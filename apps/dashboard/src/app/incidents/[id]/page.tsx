@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   BookOpen,
   Check,
-  Code2,
   History,
   RotateCcw,
   Shield,
@@ -16,8 +15,15 @@ import {
 import { Sidebar } from "../../../components/Sidebar";
 import { Header } from "../../../components/Header";
 import { StatusBadge } from "../../../components/StatusBadge";
+import { PayloadDiffViewer } from "../../../components/PayloadDiffViewer";
+import { IncidentAuditTimeline } from "../../../components/IncidentAuditTimeline";
 import { api } from "../../../lib/api";
-import { Incident, RecoveryAttempt, SSEEvent } from "../../../lib/types";
+import {
+  AuditLogEntry,
+  Incident,
+  RecoveryAttempt,
+  SSEEvent,
+} from "../../../lib/types";
 import { useSSE } from "../../../lib/use-sse";
 
 interface PageProps {
@@ -30,6 +36,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [recoveries, setRecoveries] = useState<RecoveryAttempt[]>([]);
+  const [auditHistory, setAuditHistory] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [acting, setActing] = useState<boolean>(false);
 
@@ -39,8 +46,12 @@ export default function IncidentDetailPage({ params }: PageProps) {
       const inc = await api.getIncidentById(incidentId);
       setIncident(inc);
 
-      const recData = await api.getIncidentRecoveries(incidentId);
+      const [recData, historyData] = await Promise.all([
+        api.getIncidentRecoveries(incidentId),
+        api.getIncidentHistory(incidentId),
+      ]);
       setRecoveries(recData.recoveries);
+      setAuditHistory(historyData.history);
     } catch (err: unknown) {
       console.error("Failed to load incident detail:", err);
     } finally {
@@ -52,7 +63,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
     loadDetail();
   }, [loadDetail]);
 
-  useSSE(
+  const { status: sseStatus } = useSSE(
     useCallback(
       (event: SSEEvent) => {
         const eventIncidentId =
@@ -105,7 +116,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
   if (loading) {
     return (
       <div className="flex min-h-screen bg-slate-950 text-slate-100">
-        <Sidebar />
+        <Sidebar sseStatus={sseStatus} />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-3 text-slate-400 text-sm">
             <RotateCcw className="h-5 w-5 animate-spin text-cyan-400" />
@@ -119,7 +130,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
   if (!incident) {
     return (
       <div className="flex min-h-screen bg-slate-950 text-slate-100">
-        <Sidebar />
+        <Sidebar sseStatus={sseStatus} />
         <div className="flex-1 p-8">
           <p className="text-rose-400">Incident not found: {incidentId}</p>
           <Link href="/incidents" className="text-cyan-400 underline mt-4 inline-block text-sm">
@@ -134,7 +145,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
-      <Sidebar />
+      <Sidebar sseStatus={sseStatus} />
 
       <div className="flex-1 flex flex-col min-w-0">
         <Header
@@ -318,53 +329,14 @@ export default function IncidentDetailPage({ params }: PageProps) {
           )}
 
           {/* Side-by-Side Payload Diff View */}
-          <div className="rounded-xl border border-slate-900 bg-slate-950/60 overflow-hidden">
-            <div className="px-6 py-3.5 border-b border-slate-900 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Code2 className="h-4 w-4 text-cyan-400" />
-                <h3 className="text-sm font-semibold text-white">
-                  Payload Mutation Inspector (Original vs AI Proposed)
-                </h3>
-              </div>
-              <span className="text-[11px] text-slate-500 font-mono">
-                Immutable Fields (orderId, userId, amount) Protected
-              </span>
-            </div>
+          <PayloadDiffViewer
+            payloadSnapshot={incident.payloadSnapshot}
+            proposedPayload={incident.proposedPayload}
+            mutations={incident.aiDiagnosis?.mutations}
+          />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-900">
-              {/* Original Payload */}
-              <div className="p-5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-rose-400 uppercase tracking-wider">
-                    Original Failed Payload Snapshot
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    Immutable
-                  </span>
-                </div>
-                <pre className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto max-h-80">
-                  {JSON.stringify(incident.payloadSnapshot, null, 2)}
-                </pre>
-              </div>
-
-              {/* Proposed Payload */}
-              <div className="p-5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-                    Repaired Payload (Validation Passed)
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    Target for Re-injection
-                  </span>
-                </div>
-                <pre className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 text-xs font-mono text-slate-200 overflow-x-auto max-h-80">
-                  {incident.proposedPayload
-                    ? JSON.stringify(incident.proposedPayload, null, 2)
-                    : "// No proposed payload generated (Proposal not yet formed)"}
-                </pre>
-              </div>
-            </div>
-          </div>
+          {/* Audit Trail Timeline */}
+          <IncidentAuditTimeline history={auditHistory} />
 
           {/* Recovery Attempts History */}
           <div className="rounded-xl border border-slate-900 bg-slate-950/60 p-6 space-y-4">
