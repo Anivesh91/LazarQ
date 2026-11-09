@@ -135,8 +135,11 @@ lazarQ/
 │           └── publisher.ts       # BullMQ intake queue publisher
 │
 ├── prisma/
+│   ├── migrations/                # Versioned PostgreSQL + pgvector baseline migrations
 │   └── schema.prisma              # Incident, Runbook, RecoveryAttempt, AuditLog
-├── docker-compose.yml             # PostgreSQL 16 (pgvector) + Redis 7 Alpine
+├── .github/workflows/ci.yml       # Automated build, lint, test, and Docker CI pipeline
+├── docker-compose.yml             # Local PostgreSQL 16 (pgvector) + Redis 7 Alpine
+├── docker-compose.prod.yml        # Full-stack production Compose (Postgres, Redis, Engine, Dashboard)
 ├── turbo.json                     # Turborepo task pipeline
 └── package.json                   # Monorepo root scripts
 ```
@@ -243,6 +246,20 @@ Watch them stream live into the Next.js Cockpit via real-time Server-Sent Events
 
 ---
 
+## 🐳 Production Docker Deployment
+
+Run the entire stack (PostgreSQL with `pgvector`, Redis, Engine API, and standalone Next.js Cockpit) in containers:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+- **Engine Migration Hook**: `apps/engine/docker-entrypoint.sh` automatically runs `prisma migrate deploy` when `RUN_MIGRATIONS=true` (default in `docker-compose.prod.yml`). Set `SEED_RUNBOOKS=true` on first boot to populate the default SOP runbooks.
+- **Standalone Dashboard Build**: `apps/dashboard/Dockerfile` sets `NEXT_OUTPUT_STANDALONE=true` to emit a minimal standalone Next.js server while preserving fast native local builds.
+- **HTTPS Cookie Flag**: When deploying behind an HTTPS reverse proxy, set `DASHBOARD_COOKIE_SECURE=true` so operator session cookies always carry the `Secure` attribute.
+
+---
+
 ## 📚 API Reference
 
 All protected endpoints require the `x-api-key` header (configured via `ENGINE_API_KEY`).
@@ -255,9 +272,11 @@ All protected endpoints require the `x-api-key` header (configured via `ENGINE_A
 | `GET` | `/api/incidents/:id` | Full incident details with AI diagnosis, diff & SOP citation | Required |
 | `POST` | `/api/incidents/:id/approve` | Approve proposal & trigger dynamic queue re-injection | Required |
 | `POST` | `/api/incidents/:id/reject` | Quarantine incident with reason | Required |
-| `GET` | `/api/incidents/:id/recoveries` | Recovery execution attempts & audit history | Required |
+| `GET` | `/api/incidents/:id/recoveries` | Recovery execution attempts | Required |
+| `GET` | `/api/incidents/:id/history` | Chronological audit log history | Required |
 | `GET` | `/api/runbooks` | List troubleshooting SOP runbooks | Required |
 | `POST` | `/api/runbooks` | Create runbook + generate 768-dim vector embedding | Required |
+| `PATCH` | `/api/runbooks/:id` | Update runbook metadata or re-embed SOP content | Required |
 | `DELETE` | `/api/runbooks/:id` | Delete runbook | Required |
 | `GET` | `/api/metrics` | Database-calculated operational metrics & resolution rates | Required |
 

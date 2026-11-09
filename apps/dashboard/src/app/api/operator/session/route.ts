@@ -8,6 +8,16 @@ import {
   isValidOperatorPassword,
 } from "../../../../lib/operator-session";
 
+function shouldUseSecureSessionCookie(): boolean {
+  if (process.env.DASHBOARD_COOKIE_SECURE === "false") {
+    return false;
+  }
+  if (process.env.DASHBOARD_COOKIE_SECURE === "true") {
+    return true;
+  }
+  return process.env.NODE_ENV === "production";
+}
+
 export async function GET(request: NextRequest) {
   const response = NextResponse.json({
     authEnabled: isOperatorAuthEnabled(),
@@ -50,11 +60,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const secureCookie = shouldUseSecureSessionCookie();
   const response = NextResponse.json({ success: true });
   response.headers.set("Cache-Control", "no-store");
   response.cookies.set(OPERATOR_SESSION_COOKIE, session, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie,
     sameSite: "strict",
     path: "/",
     maxAge: OPERATOR_SESSION_MAX_AGE,
@@ -63,11 +74,12 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE() {
+  const secureCookie = shouldUseSecureSessionCookie();
   const response = NextResponse.json({ success: true });
   response.headers.set("Cache-Control", "no-store");
   response.cookies.set(OPERATOR_SESSION_COOKIE, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie,
     sameSite: "strict",
     path: "/",
     maxAge: 0,

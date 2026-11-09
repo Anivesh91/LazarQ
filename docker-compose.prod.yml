@@ -1,0 +1,74 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dlqhealer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dlqhealer}
+      POSTGRES_DB: ${POSTGRES_DB:-dlqhealer}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dlqhealer} -d ${POSTGRES_DB:-dlqhealer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  engine:
+    build:
+      context: .
+      dockerfile: apps/engine/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dlqhealer}:${POSTGRES_PASSWORD:-dlqhealer}@postgres:5432/${POSTGRES_DB:-dlqhealer}?schema=public
+      REDIS_URL: redis://redis:6379
+      ENGINE_PORT: 5000
+      ENGINE_API_KEY: ${ENGINE_API_KEY:-dlq_dev_secret_key}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_API_KEY: ${LLM_API_KEY:-your-llm-api-key-here}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-your-embedding-api-key-here}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-001}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      SEED_RUNBOOKS: ${SEED_RUNBOOKS:-false}
+    ports:
+      - "${ENGINE_PORT:-5000}:5000"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      engine:
+        condition: service_healthy
+    environment:
+      ENGINE_URL: http://engine:5000
+      NEXT_PUBLIC_ENGINE_URL: ${NEXT_PUBLIC_ENGINE_URL:-http://localhost:5000}
+      ENGINE_API_KEY: ${ENGINE_API_KEY:-dlq_dev_secret_key}
+      DASHBOARD_OPERATOR_PASSWORD: ${DASHBOARD_OPERATOR_PASSWORD:-}
+      DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:-}
+      DASHBOARD_COOKIE_SECURE: ${DASHBOARD_COOKIE_SECURE:-false}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+
+volumes:
+  redis_prod_data:
+  postgres_prod_data:

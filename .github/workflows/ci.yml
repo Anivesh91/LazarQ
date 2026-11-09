@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-lint-test:
+    name: Build, Lint & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: dlqhealer
+          POSTGRES_PASSWORD: dlqhealer
+          POSTGRES_DB: dlqhealer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U dlqhealer -d dlqhealer"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://dlqhealer:dlqhealer@localhost:5432/dlqhealer?schema=public
+      REDIS_URL: redis://localhost:6379
+      ENGINE_PORT: 5000
+      ENGINE_API_KEY: dlq_ci_secret_key
+      LLM_PROVIDER: gemini
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY || secrets.GEMINI_API_KEY || 'your-llm-api-key-here' }}
+      EMBEDDING_PROVIDER: gemini
+      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY || secrets.GEMINI_API_KEY || 'your-embedding-api-key-here' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm db:generate
+
+      - name: Apply Prisma migrations
+        run: pnpm db:migrate:deploy
+
+      - name: Build all workspaces
+        run: pnpm build
+
+      - name: Lint all workspaces
+        run: pnpm lint
+
+      - name: Run SDK tests
+        run: pnpm --filter @dlq-healer/sdk test
+
+      - name: Run Dashboard tests
+        run: pnpm --filter @dlq-healer/dashboard test
+
+      - name: Run Engine deterministic unit and integration suites
+        run: |
+          pnpm --filter @dlq-healer/engine exec vitest run \
+            tests/api.test.ts \
+            tests/circuit-breaker.test.ts \
+            tests/embedding.test.ts \
+            tests/events.test.ts \
+            tests/incident.test.ts \
+            tests/metrics.test.ts \
+            tests/phase1-regressions.test.ts \
+            tests/phase3-health.test.ts \
+            tests/recovery.test.ts \
+            tests/runbook.test.ts \
+            tests/validator.test.ts
+
+      - name: Seed runbooks and run live AI semantic suites
+        if: >-
+          env.LLM_API_KEY != 'your-llm-api-key-here' &&
+          env.EMBEDDING_API_KEY != 'your-embedding-api-key-here'
+        run: |
+          pnpm --filter @dlq-healer/engine seed:runbooks
+          pnpm --filter @dlq-healer/engine exec vitest run \
+            tests/rag.test.ts \
+            tests/triage.test.ts \
+            tests/e2e.test.ts
+
+  docker-build:
+    name: Verify Docker Images
+    runs-on: ubuntu-latest
+    needs: build-lint-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Engine production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/engine/Dockerfile
+          push: false
+          load: false
+          cache-from: type=gha,scope=engine
+          cache-to: type=gha,mode=max,scope=engine
+
+      - name: Build Dashboard production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          push: false
+          load: false
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
