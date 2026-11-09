@@ -1,4 +1,4 @@
-import { QueueEvents } from "bullmq";
+import { Queue, QueueEvents } from "bullmq";
 import Redis from "ioredis";
 import { redis } from "../config/redis";
 import { logger } from "../config/logger";
@@ -8,6 +8,55 @@ import { eventBroadcaster } from "../services/event-broadcaster.service";
 export class ReplayResultObserver {
   private observers: Map<string, QueueEvents> = new Map();
   private connections: Map<string, Redis> = new Map();
+  private inspectionQueues: Map<string, Queue> = new Map();
+
+  private getInspectionQueue(queueName: string): Queue {
+    let queue = this.inspectionQueues.get(queueName);
+    if (!queue) {
+      queue = new Queue(queueName, { connection: redis });
+      this.inspectionQueues.set(queueName, queue);
+    }
+    return queue;
+  }
+
+  /**
+   * Checks whether a BullMQ failed event represents a terminal retry exhaustion
+   * rather than an intermediate retry attempt that is still scheduled to run again.
+   */
+  public async isTerminalFailure(queueName: string, jobId: string): Promise<boolean> {
+    try {
+      const queue = this.getInspectionQueue(queueName);
+      const job = await queue.getJob(jobId);
+      if (!job) {
+        return true;
+      }
+
+      const state = await job.getState();
+      const maxAttempts = job.opts?.attempts ?? 1;
+
+      if (state !== "failed" && job.attemptsMade < maxAttempts) {
+        logger.info(
+          {
+            queueName,
+            jobId,
+            state,
+            attemptsMade: job.attemptsMade,
+            maxAttempts,
+          },
+          "[Replay Observer] Replayed job failed on intermediate retry; waiting for remaining attempts"
+        );
+        return false;
+      }
+
+      return true;
+    } catch (err: any) {
+      logger.warn(
+        { queueName, jobId, err: err.message },
+        "[Replay Observer] Could not inspect BullMQ job state; treating failed event as terminal"
+      );
+      return true;
+    }
+  }
 
   /**
    * Ensures an active QueueEvents subscriber is listening to the target queue.
@@ -40,9 +89,14 @@ export class ReplayResultObserver {
     });
 
     observer.on("failed", async ({ jobId, failedReason }) => {
+      const isTerminal = await this.isTerminalFailure(queueName, jobId);
+      if (!isTerminal) {
+        return;
+      }
+
       logger.warn(
         { queueName, jobId, failedReason },
-        "[Replay Observer] Detected failed job event in queue"
+        "[Replay Observer] Detected terminal failed job event in queue"
       );
       await this.handleJobFailed(queueName, jobId, failedReason);
     });
@@ -227,6 +281,10 @@ export class ReplayResultObserver {
     const closePromises = Array.from(this.observers.values()).map((obs) => obs.close());
     await Promise.all(closePromises);
     this.observers.clear();
+
+    const queueClosePromises = Array.from(this.inspectionQueues.values()).map((q) => q.close());
+    await Promise.all(queueClosePromises);
+    this.inspectionQueues.clear();
 
     const connPromises = Array.from(this.connections.values()).map((conn) =>
       conn.status === "ready" || conn.status === "connect"

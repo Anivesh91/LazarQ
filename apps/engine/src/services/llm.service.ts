@@ -113,7 +113,7 @@ CRITICAL SAFETY DIRECTIVES:
 2. NEVER invent, hallucinate, or forge database keys or entity identifiers (e.g. userId, accountId, customerId).
 3. If critical payload data is missing and cannot be safely derived, you MUST output action "QUARANTINE".
 4. For transient network, rate limits, or pool timeouts, prescribe action "RETRY" or "MUTATE_AND_RETRY" with exponential backoff delaySeconds (e.g. 30 to 60s).
-5. If the SOP specifies a channel fallback mutation (e.g. from SMS to EMAIL) and the payload contains a valid email, you MUST prescribe action "MUTATE_AND_RETRY" and include the mutation {"field": "notificationChannel", "from": "SMS", "to": "EMAIL"}.
+5. If the SOP specifies a channel fallback mutation (e.g. from SMS to EMAIL) and the payload contains a valid email (or customerEmail, even if redacted), you MUST prescribe action "MUTATE_AND_RETRY" and mutate whichever channel field exists in the payload snapshot ("channel" if present, otherwise "notificationChannel") from "SMS" to "EMAIL" (e.g., {"field": "channel", "from": "SMS", "to": "EMAIL"}).
 6. Allowed actions: "RETRY", "MUTATE_AND_RETRY", "QUARANTINE".
 7. Allowed classifications: "TRANSIENT", "INVALID_PAYLOAD", "DEPENDENCY_FAILURE", "UNKNOWN".
 8. Mutations array contains field modifications required before replay. Each mutation specifies "field", "from", and "to".
@@ -200,6 +200,11 @@ Generate the JSON remediation proposal now.`;
     const err = input.errorMessage.toLowerCase();
 
     if (err.includes("20429") || err.includes("rate limit")) {
+      const channelField =
+        "channel" in input.payloadSnapshot
+          ? "channel"
+          : "notificationChannel";
+
       return {
         classification: "TRANSIENT",
         action: "MUTATE_AND_RETRY",
@@ -207,8 +212,8 @@ Generate the JSON remediation proposal now.`;
         delaySeconds: 60,
         mutations: [
           {
-            field: "notificationChannel",
-            from: input.payloadSnapshot.notificationChannel || "SMS",
+            field: channelField,
+            from: input.payloadSnapshot[channelField] || "SMS",
             to: "EMAIL",
             reason: "Switch to email fallback channel per Twilio 20429 rate limit SOP",
           },

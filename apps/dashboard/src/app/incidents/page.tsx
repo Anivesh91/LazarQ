@@ -4,13 +4,9 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Check,
-  CheckCircle2,
-  Clock,
   Filter,
-  Play,
   RotateCcw,
   Search,
-  ShieldAlert,
   X,
 } from "lucide-react";
 import { Sidebar } from "../../components/Sidebar";
@@ -18,7 +14,7 @@ import { Header } from "../../components/Header";
 import { StatusBadge } from "../../components/StatusBadge";
 import { api } from "../../lib/api";
 import { useSSE } from "../../lib/use-sse";
-import { Incident, IncidentStatus, SSEEvent } from "../../lib/types";
+import { Incident, SSEEvent } from "../../lib/types";
 
 export default function IncidentsPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -81,8 +77,9 @@ export default function IncidentsPage() {
       setActionLoadingId(id);
       await api.approveIncident(id, { approvedBy: "dashboard-user", autoReplay: true });
       await loadIncidents();
-    } catch (err: any) {
-      alert(`Approval error: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Approval error: ${msg}`);
     } finally {
       setActionLoadingId(null);
     }
@@ -96,8 +93,9 @@ export default function IncidentsPage() {
       setActionLoadingId(id);
       await api.rejectIncident(id, { rejectedBy: "dashboard-user", reason });
       await loadIncidents();
-    } catch (err: any) {
-      alert(`Reject error: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Reject error: ${msg}`);
     } finally {
       setActionLoadingId(null);
     }

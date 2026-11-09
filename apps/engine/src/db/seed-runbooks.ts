@@ -15,7 +15,7 @@ Worker throws "Twilio Error 20429: Rate limit exceeded" when attempting to send 
 Twilio concurrency limit for shortcodes or standard phone numbers has been temporarily saturated due to burst traffic.
 
 ## Remediation Strategy
-1. Fallback Channel: If the job payload contains a valid customer email or alternative channel, mutate "notificationChannel" from "SMS" to "EMAIL".
+1. Fallback Channel: If the job payload contains a valid email/customerEmail field (or alternative channel), mutate the active channel field ("channel" or "notificationChannel") from "SMS" to "EMAIL".
 2. Backoff Replay: If email fallback is not viable, reschedule the job with an exponential backoff delay (minimum 60 seconds) with jitter.
 3. Safe Replay: This error is transient. Do NOT quarantine the job unless rate limits persist continuously for more than 15 minutes.`,
   },
@@ -62,7 +62,15 @@ export async function seedRunbooks() {
     });
 
     if (existing) {
-      logger.info({ title: item.title }, "Runbook already exists, skipping");
+      if (existing.content.includes('mutate "notificationChannel" from "SMS" to "EMAIL"')) {
+        await prisma.runbook.update({
+          where: { id: existing.id },
+          data: { content: item.content },
+        });
+        logger.info({ title: item.title }, "Updated seeded Runbook channel fallback instructions");
+      } else {
+        logger.info({ title: item.title }, "Runbook already exists, skipping");
+      }
       continue;
     }
 

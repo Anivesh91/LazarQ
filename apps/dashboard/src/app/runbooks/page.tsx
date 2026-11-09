@@ -2,12 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  BookOpen,
   Database,
   Plus,
-  RotateCcw,
   Sparkles,
-  Tag,
   Trash2,
   X,
 } from "lucide-react";
@@ -75,8 +72,9 @@ export default function RunbooksPage() {
 
       await loadRunbooks();
       setSelectedRunbook(res.data);
-    } catch (err: any) {
-      alert(`Failed to save runbook: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Failed to save runbook: ${msg}`);
     } finally {
       setSaving(false);
     }
@@ -91,8 +89,9 @@ export default function RunbooksPage() {
       await api.deleteRunbook(id);
       setSelectedRunbook(null);
       await loadRunbooks();
-    } catch (err: any) {
-      alert(`Delete failed: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Delete failed: ${msg}`);
     }
   };
 

@@ -2,27 +2,22 @@
 
 import React, { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BookOpen,
   Check,
-  CheckCircle2,
-  Clock,
   Code2,
   History,
   RotateCcw,
   Shield,
-  ShieldAlert,
   Sparkles,
   X,
-  Zap,
 } from "lucide-react";
 import { Sidebar } from "../../../components/Sidebar";
 import { Header } from "../../../components/Header";
 import { StatusBadge } from "../../../components/StatusBadge";
 import { api } from "../../../lib/api";
-import { Incident, RecoveryAttempt } from "../../../lib/types";
+import { Incident, RecoveryAttempt, SSEEvent } from "../../../lib/types";
 import { useSSE } from "../../../lib/use-sse";
 
 interface PageProps {
@@ -32,7 +27,6 @@ interface PageProps {
 export default function IncidentDetailPage({ params }: PageProps) {
   const resolvedParams = use(params);
   const incidentId = resolvedParams.id;
-  const router = useRouter();
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [recoveries, setRecoveries] = useState<RecoveryAttempt[]>([]);
@@ -47,7 +41,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
 
       const recData = await api.getIncidentRecoveries(incidentId);
       setRecoveries(recData.recoveries);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to load incident detail:", err);
     } finally {
       setLoading(false);
@@ -60,7 +54,7 @@ export default function IncidentDetailPage({ params }: PageProps) {
 
   useSSE(
     useCallback(
-      (event: any) => {
+      (event: SSEEvent) => {
         const eventIncidentId =
           event.data?.incidentId ?? event.data?.incident?.id;
         if (event.type.startsWith("incident:") && eventIncidentId === incidentId) {
@@ -80,8 +74,9 @@ export default function IncidentDetailPage({ params }: PageProps) {
         autoReplay: true,
       });
       await loadDetail();
-    } catch (err: any) {
-      alert(`Approval failed: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Approval failed: ${msg}`);
     } finally {
       setActing(false);
     }
@@ -99,8 +94,9 @@ export default function IncidentDetailPage({ params }: PageProps) {
         reason,
       });
       await loadDetail();
-    } catch (err: any) {
-      alert(`Rejection failed: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Rejection failed: ${msg}`);
     } finally {
       setActing(false);
     }

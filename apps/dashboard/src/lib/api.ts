@@ -159,7 +159,7 @@ export const api = {
   /**
    * Delete a Runbook by ID
    */
-  async deleteRunbook(id: string): Promise<{ success: boolean; data: any }> {
+  async deleteRunbook(id: string): Promise<{ success: boolean; data: unknown }> {
     return fetchJSON(`/runbooks/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });

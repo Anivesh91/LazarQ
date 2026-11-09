@@ -21,8 +21,8 @@ export type RecoveryStatus =
 
 export interface RepairMutation {
   field: string;
-  from: any;
-  to: any;
+  from: unknown;
+  to: unknown;
   reason?: string;
 }
 
@@ -41,7 +41,7 @@ export interface ValidationStage {
   name: string;
   passed: boolean;
   error?: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export interface ValidationResult {
@@ -56,8 +56,8 @@ export interface Incident {
   queueName: string;
   jobId: string;
   jobName: string;
-  payloadSnapshot: Record<string, any>;
-  expectedJsonSchema?: Record<string, any> | null;
+  payloadSnapshot: Record<string, unknown>;
+  expectedJsonSchema?: Record<string, unknown> | null;
   errorMessage: string;
   stackTrace?: string | null;
   attemptsMade: number;
@@ -72,7 +72,7 @@ export interface Incident {
     tags: string[];
   } | null;
   aiDiagnosis?: AiDiagnosis | null;
-  proposedPayload?: Record<string, any> | null;
+  proposedPayload?: Record<string, unknown> | null;
   validationResult?: ValidationResult | null;
   occurredAt: string;
   createdAt: string;
@@ -91,7 +91,7 @@ export interface Runbook {
 export interface RecoveryAttempt {
   id: string;
   incidentId: string;
-  proposedPayload: Record<string, any>;
+  proposedPayload: Record<string, unknown>;
   replayJobId?: string | null;
   status: RecoveryStatus;
   failureReason?: string | null;
@@ -106,8 +106,20 @@ export interface SystemHealth {
   timestamp: string;
 }
 
+export interface SSEEventPayload {
+  incidentId?: string;
+  queueName?: string;
+  status?: string;
+  message?: string;
+  incident?: {
+    id?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export interface SSEEvent {
   type: string;
-  data: any;
+  data: SSEEventPayload;
   timestamp: string;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { SSEEvent } from "./types";
+import { SSEEvent, SSEEventPayload } from "./types";
 
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
@@ -29,11 +29,22 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
 
     const handleMessage = (type: string, ev: MessageEvent) => {
       try {
-        const parsed = JSON.parse(ev.data) as SSEEvent;
+        const parsed = JSON.parse(ev.data) as Record<string, unknown>;
+        const payload: SSEEventPayload =
+          parsed.data !== undefined &&
+          typeof parsed.data === "object" &&
+          parsed.data !== null
+            ? (parsed.data as SSEEventPayload)
+            : (parsed as SSEEventPayload);
         const sseEvent: SSEEvent = {
-          type: type || parsed.type || "unknown",
-          data: parsed.data !== undefined ? parsed.data : parsed,
-          timestamp: parsed.timestamp || new Date().toISOString(),
+          type:
+            type ||
+            (typeof parsed.type === "string" ? parsed.type : "unknown"),
+          data: payload,
+          timestamp:
+            typeof parsed.timestamp === "string"
+              ? parsed.timestamp
+              : new Date().toISOString(),
         };
 
         setLastEvent(sseEvent);
@@ -42,7 +53,7 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
         if (onEvent) {
           onEvent(sseEvent);
         }
-      } catch (err) {
+      } catch {
         // non-json or ping event
       }
     };
