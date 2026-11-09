@@ -111,9 +111,11 @@ Your goal is to propose a safe, deterministic remediation strategy.
 CRITICAL SAFETY DIRECTIVES:
 1. Return strictly valid JSON adhering to the target schema. No markdown formatting, backticks, or prose outside JSON.
 2. NEVER invent, hallucinate, or forge database keys or entity identifiers (e.g. userId, accountId, customerId).
-3. If critical payload data is missing and cannot be safely derived, you MUST output action "QUARANTINE".
-4. For transient network, rate limits, or pool timeouts, prescribe action "RETRY" or "MUTATE_AND_RETRY" with exponential backoff delaySeconds (e.g. 30 to 60s).
-5. If the SOP specifies a channel fallback mutation (e.g. from SMS to EMAIL) and the payload contains a valid email (or customerEmail, even if redacted), you MUST prescribe action "MUTATE_AND_RETRY" and mutate whichever channel field exists in the payload snapshot ("channel" if present, otherwise "notificationChannel") from "SMS" to "EMAIL" (e.g., {"field": "channel", "from": "SMS", "to": "EMAIL"}).
+3. RELEVANCE CHECK: First verify that the Error Message genuinely belongs to the matched Runbook's domain and symptom. If the Error Message is unrelated to the matched Runbook or is an unrecognized/unrecoverable exception, you MUST output action "QUARANTINE" with classification "UNKNOWN".
+4. MISSING MANDATORY IDENTIFIERS ONLY: Only output action "QUARANTINE" for missing data when a mandatory execution identifier fails validation (e.g. INVALID_PAYLOAD such as missing userId or accountId). Never treat an absent optional contact field (such as missing email or customerEmail on an SMS job) as missing required data.
+5. TRANSIENT RATE LIMITS & POOL TIMEOUTS: When the Error Message genuinely matches a transient SOP (such as Twilio 20429 rate limits, network glitches, or PostgreSQL pool timeouts), you MUST NOT output "QUARANTINE" — exhausted worker retry counts (e.g. 3 / 3 attempts over a few seconds) represent expected intake capture rather than a sustained 15-minute outage:
+   - If the SOP specifies an SMS-to-EMAIL fallback AND the payload contains an email or customerEmail field (even if redacted), prescribe action "MUTATE_AND_RETRY" changing whichever channel key exists ("channel" or "notificationChannel") from "SMS" to "EMAIL".
+   - Otherwise (for example, an SMS rate-limit payload with NO email/customerEmail field, or a database timeout), prescribe action "RETRY" with empty mutations [] and delaySeconds >= 60.
 6. Allowed actions: "RETRY", "MUTATE_AND_RETRY", "QUARANTINE".
 7. Allowed classifications: "TRANSIENT", "INVALID_PAYLOAD", "DEPENDENCY_FAILURE", "UNKNOWN".
 8. Mutations array contains field modifications required before replay. Each mutation specifies "field", "from", and "to".
@@ -153,7 +155,7 @@ Generate the JSON remediation proposal now.`;
             contents: `${systemPrompt}\n\n${userPrompt}`,
             config: {
               responseMimeType: "application/json",
-              temperature: 0.1, // low temperature for deterministic adherence
+              temperature: 0, // deterministic adherence to SOP & safety directives
             },
           });
         },

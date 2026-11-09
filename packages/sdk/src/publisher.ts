@@ -1,33 +1,22 @@
 import { Queue } from "bullmq";
-import Redis from "ioredis";
 import { IncidentSnapshot } from "./types";
 
 export class SmartDLQPublisher {
   private intakeQueue: Queue<IncidentSnapshot>;
-  private ownConnection: boolean = false;
-  private redisClient?: Redis;
   private shuttingDown = false;
 
   constructor(
     queueName: string = "dlq-healer-intake",
     connectionOrUrl?: any
   ) {
-    let connection = connectionOrUrl;
-
-    if (!connection || typeof connection === "string") {
-      const url = connection || "redis://localhost:6379";
-      this.redisClient = new Redis(url, {
-        maxRetriesPerRequest: null,
-        enableReadyCheck: false,
-      });
-      this.redisClient.on("error", (err) => {
-        if (!this.shuttingDown || !this.isExpectedShutdownError(err)) {
-          console.error("[DLQ-Healer SDK] Redis connection error:", err);
-        }
-      });
-      connection = this.redisClient;
-      this.ownConnection = true;
-    }
+    const connection =
+      !connectionOrUrl || typeof connectionOrUrl === "string"
+        ? {
+            url: connectionOrUrl || "redis://localhost:6379",
+            maxRetriesPerRequest: null,
+            enableReadyCheck: false,
+          }
+        : connectionOrUrl;
 
     this.intakeQueue = new Queue<IncidentSnapshot>(queueName, {
       connection,
@@ -50,7 +39,9 @@ export class SmartDLQPublisher {
   }
 
   private isExpectedShutdownError(error: Error): boolean {
-    return /connection is (already )?closed/i.test(error.message);
+    return /connection is (already )?closed|ECONNREFUSED|ENOTFOUND/i.test(
+      error.message
+    );
   }
 
   /**
@@ -73,39 +64,55 @@ export class SmartDLQPublisher {
 
   async close(): Promise<void> {
     this.shuttingDown = true;
-    let closeError: unknown;
+    const internalConnection = (this.intakeQueue as unknown as {
+      connection?: {
+        initializing?: Promise<unknown>;
+        on?: (event: string, listener: (err: Error) => void) => void;
+        removeAllListeners?: () => void;
+      };
+    }).connection;
 
+    // If BullMQ is still mid-handshake, let a healthy connection settle briefly
+    // so Queue.close() can issue a clean QUIT rather than aborting in-flight init().
+    let readyTimeout: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.intakeQueue.waitUntilReady().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        readyTimeout = setTimeout(resolve, 150);
+        readyTimeout.unref?.();
+      }),
+    ]);
+    if (readyTimeout) clearTimeout(readyTimeout);
+
+    let closeError: unknown;
     try {
       await this.intakeQueue.close();
     } catch (err) {
       if (!(err instanceof Error) || !this.isExpectedShutdownError(err)) {
         closeError = err;
       }
-    }
-
-    if (this.ownConnection && this.redisClient) {
-      try {
-        if (this.redisClient.status === "ready") {
-          let timeout: ReturnType<typeof setTimeout> | undefined;
-          const quitCompleted = await Promise.race([
-            this.redisClient.quit().then(() => true),
-            new Promise<boolean>((resolve) => {
-              timeout = setTimeout(() => resolve(false), 5000);
-            }),
-          ]);
-          if (timeout) clearTimeout(timeout);
-          if (!quitCompleted) {
-            this.redisClient.disconnect();
+    } finally {
+      // BullMQ's RedisConnection.close() clears all event listeners before an
+      // aborted init() rejects on the next tick and emits 'error' on itself.
+      if (internalConnection?.on) {
+        internalConnection.on("error", (err) => {
+          if (!this.isExpectedShutdownError(err)) {
+            console.error("[DLQ-Healer SDK] Redis shutdown error:", err);
           }
-        } else {
-          this.redisClient.disconnect();
-        }
-      } catch (err) {
-        this.redisClient.disconnect();
-        if (!(err instanceof Error) || !this.isExpectedShutdownError(err)) {
-          closeError ??= err;
-        }
+        });
       }
+      if (internalConnection?.initializing) {
+        let initTimeout: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          internalConnection.initializing.catch(() => undefined),
+          new Promise<void>((resolve) => {
+            initTimeout = setTimeout(resolve, 150);
+            initTimeout.unref?.();
+          }),
+        ]);
+        if (initTimeout) clearTimeout(initTimeout);
+      }
+      internalConnection?.removeAllListeners?.();
     }
 
     if (closeError) throw closeError;

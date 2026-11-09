@@ -75,4 +75,17 @@ describe("SDK attachDLQHealer hook", () => {
     healer.detach();
     await healer.publisher.close();
   });
+
+  it("should close cleanly without throwing when closed before Redis connects", async () => {
+    const mockWorker = new EventEmitter() as any;
+    mockWorker.name = "test-unreachable-queue";
+
+    const healer = attachDLQHealer(mockWorker, {
+      redisUrl: "redis://127.0.0.1:6399",
+      enableLogging: false,
+    });
+
+    healer.detach();
+    await healer.publisher.close();
+  });
 });
