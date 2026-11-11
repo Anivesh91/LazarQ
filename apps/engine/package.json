@@ -16,6 +16,8 @@
     "@dlq-healer/sdk": "workspace:*",
     "@google/genai": "^2.31.0",
     "@prisma/client": "^6.9.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "bullmq": "^5.52.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",

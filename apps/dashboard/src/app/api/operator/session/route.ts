@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createOperatorSession,
+  getOperatorAuthState,
   isAuthorizedOperatorSession,
-  isOperatorAuthEnabled,
   OPERATOR_SESSION_COOKIE,
   OPERATOR_SESSION_MAX_AGE,
   isValidOperatorPassword,
@@ -19,8 +19,11 @@ function shouldUseSecureSessionCookie(): boolean {
 }
 
 export async function GET(request: NextRequest) {
+  const authState = getOperatorAuthState();
   const response = NextResponse.json({
-    authEnabled: isOperatorAuthEnabled(),
+    authEnabled: authState.authRequired,
+    configured: authState.configured,
+    misconfigured: authState.misconfigured,
     authenticated: isAuthorizedOperatorSession(request),
   });
   response.headers.set("Cache-Control", "no-store");
@@ -28,13 +31,13 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (
-    !process.env.DASHBOARD_OPERATOR_PASSWORD ||
-    !process.env.DASHBOARD_SESSION_SECRET ||
-    process.env.DASHBOARD_SESSION_SECRET.length < 32
-  ) {
+  const authState = getOperatorAuthState();
+  if (!authState.configured) {
     return NextResponse.json(
-      { message: "Dashboard operator authentication is not configured" },
+      {
+        message:
+          authState.reason || "Dashboard operator authentication is not configured",
+      },
       { status: 503 }
     );
   }

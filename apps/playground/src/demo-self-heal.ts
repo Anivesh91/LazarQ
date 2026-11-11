@@ -7,7 +7,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../engine/.env") });
 dotenv.config();
 
 import { orderQueue, ORDER_QUEUE_NAME } from "./queues/order.queue";
-import { orderWorker } from "./workers/order.worker";
+import { orderHealer, orderWorker } from "./workers/order.worker";
 import { redisConnection } from "./config/redis";
 import {
   prisma,
@@ -43,6 +43,7 @@ function cleanupDemo(): Promise<void> {
       ["Replay observers", () => replayResultObserver.closeAll()],
       ["Replay queues", () => queueReinjector.closeAll()],
       ["Order worker", () => orderWorker.close()],
+      ["Order DLQ healer", () => orderHealer.close()],
       ["Order queue", () => orderQueue.close()],
       ["Playground Redis", () => redisConnection.quit()],
       ["Engine Redis", () => redis.quit()],

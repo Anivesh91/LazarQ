@@ -1,5 +1,4 @@
 import { createHash } from "crypto";
-import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 
 export type BreakerState = "CLOSED" | "OPEN" | "HALF_OPEN";
@@ -19,6 +18,11 @@ export interface BreakerStatus {
   coolOffRemainingMs: number;
 }
 
+/**
+ * In-memory per-process failure storm circuit breaker.
+ * Note: State is scoped to the local Engine worker process (multi-replica deployments
+ * would require externalizing breaker state to Redis).
+ */
 export class CircuitBreakerService {
   private readonly failureThreshold: number;
   private readonly windowMs: number;
@@ -190,6 +194,21 @@ export class CircuitBreakerService {
     }
 
     return { state: breaker.state };
+  }
+
+  /**
+   * Releases an in-flight HALF_OPEN trial lock if execution was aborted
+   * due to an inconclusive concurrency conflict before reaching a verdict.
+   */
+  releaseHalfOpenTrial(fingerprint: string): void {
+    const breaker = this.breakers.get(fingerprint);
+    if (breaker && breaker.state === "HALF_OPEN") {
+      breaker.trialInFlight = false;
+      logger.debug(
+        { fingerprint },
+        "[Circuit Breaker] Released inconclusive HALF_OPEN trial lock"
+      );
+    }
   }
 
   /**

@@ -97,8 +97,17 @@ export interface Runbook {
   title: string;
   content: string;
   tags: string[];
+  embeddingProvider?: string;
+  embeddingModel?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RunbooksPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }
 
 export interface RecoveryAttempt {
@@ -118,7 +127,10 @@ export interface SystemHealth {
   database: string;
   llmProvider?: string;
   llmModel?: string;
+  llmMode?: "live" | "mock";
+  embeddingProvider?: string;
   embeddingModel?: string;
+  embeddingMode?: "live" | "mock";
   timestamp: string;
 }
 
@@ -126,6 +138,8 @@ export interface SSEEventPayload {
   incidentId?: string;
   queueName?: string;
   status?: string;
+  passed?: boolean;
+  failedStage?: number;
   message?: string;
   incident?: {
     id?: string;

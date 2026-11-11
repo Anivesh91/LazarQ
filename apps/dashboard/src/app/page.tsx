@@ -83,7 +83,8 @@ export default function OverviewPage() {
         }
       },
       [loadData]
-    )
+    ),
+    loadData
   );
 
   useEffect(() => {

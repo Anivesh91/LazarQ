@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Database,
   Pencil,
   Plus,
+  Search,
   Sparkles,
+  Tag,
   Trash2,
   X,
 } from "lucide-react";
@@ -15,11 +17,21 @@ import { api } from "../../lib/api";
 import { Runbook } from "../../lib/types";
 import { useSystemHealth } from "../../lib/use-health";
 
+const RUNBOOKS_PAGE_SIZE = 20;
+
 export default function RunbooksPage() {
   const { health } = useSystemHealth();
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedRunbook, setSelectedRunbook] = useState<Runbook | null>(null);
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [tagInput, setTagInput] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
+  const [debouncedTag, setDebouncedTag] = useState<string>("");
+  const [page, setPage] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalCount, setTotalCount] = useState<number>(0);
+
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingRunbook, setEditingRunbook] = useState<Runbook | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
@@ -34,29 +46,93 @@ export default function RunbooksPage() {
   const [contentInput, setContentInput] = useState("");
   const [tagsInput, setTagsInput] = useState("");
 
-  const loadRunbooks = async (preferredId?: string) => {
-    try {
-      setLoading(true);
-      const data = await api.getRunbooks();
-      setRunbooks(data);
-      setSelectedRunbook((current) => {
-        const targetId = preferredId ?? current?.id;
-        return data.find((runbook) => runbook.id === targetId) ?? data[0] ?? null;
-      });
-    } catch (err) {
-      console.error("Failed to load runbooks:", err);
-      setFeedback({
-        type: "error",
-        message: "Failed to load runbooks from Engine.",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const requestController = useRef<AbortController | null>(null);
+  const lastAppliedFilters = useRef<{ search: string; tag: string }>({
+    search: "",
+    tag: "",
+  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const filtersChanged =
+        lastAppliedFilters.current.search !== searchInput ||
+        lastAppliedFilters.current.tag !== tagInput;
+      if (filtersChanged) {
+        lastAppliedFilters.current = { search: searchInput, tag: tagInput };
+        setPage(1);
+      }
+      setDebouncedSearch(searchInput);
+      setDebouncedTag(tagInput);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchInput, tagInput]);
+
+  const loadRunbooks = useCallback(
+    async (preferredRunbook?: Runbook | string) => {
+      requestController.current?.abort();
+      const controller = new AbortController();
+      requestController.current = controller;
+
+      try {
+        setLoading(true);
+        const res = await api.getRunbooks({
+          page,
+          limit: RUNBOOKS_PAGE_SIZE,
+          search: debouncedSearch || undefined,
+          tag: debouncedTag || undefined,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+
+        const data = res.runbooks;
+        setRunbooks(data);
+        setTotalPages(res.pagination.totalPages);
+        setTotalCount(res.pagination.total);
+
+        if (res.pagination.totalPages > 0 && page > res.pagination.totalPages) {
+          setPage(res.pagination.totalPages);
+        }
+
+        const preferredId =
+          typeof preferredRunbook === "string"
+            ? preferredRunbook
+            : preferredRunbook?.id;
+        const preferredObj =
+          typeof preferredRunbook === "object" && preferredRunbook !== null
+            ? preferredRunbook
+            : null;
+
+        setSelectedRunbook((current) => {
+          const targetId = preferredId ?? current?.id;
+          return (
+            data.find((rb) => rb.id === targetId) ??
+            preferredObj ??
+            data[0] ??
+            null
+          );
+        });
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error("Failed to load runbooks:", err);
+          setFeedback({
+            type: "error",
+            message: "Failed to load runbooks from Engine.",
+          });
+        }
+      } finally {
+        if (requestController.current === controller) {
+          requestController.current = null;
+          setLoading(false);
+        }
+      }
+    },
+    [page, debouncedSearch, debouncedTag]
+  );
 
   useEffect(() => {
     loadRunbooks();
-  }, []);
+    return () => requestController.current?.abort();
+  }, [loadRunbooks]);
 
   const openCreateModal = () => {
     setEditingRunbook(null);
@@ -113,8 +189,7 @@ export default function RunbooksPage() {
 
         setIsModalOpen(false);
         setEditingRunbook(null);
-        await loadRunbooks(res.data.id);
-        setSelectedRunbook(res.data);
+        await loadRunbooks(res.data);
         setFeedback({
           type: "success",
           message: contentChanged
@@ -132,11 +207,13 @@ export default function RunbooksPage() {
         setTitleInput("");
         setContentInput("");
         setTagsInput("");
-        await loadRunbooks(res.data.id);
-        setSelectedRunbook(res.data);
+        if (page !== 1) {
+          setPage(1);
+        }
+        await loadRunbooks(res.data);
         setFeedback({
           type: "success",
-          message: "Runbook created and vectorized with Gemini 768-dim embeddings.",
+          message: "Runbook created and vectorized with 768-dim embeddings.",
         });
       }
     } catch (err: unknown) {
@@ -227,46 +304,129 @@ export default function RunbooksPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Runbooks List */}
-            <div className="rounded-xl border border-slate-900 bg-slate-950/60 p-4 space-y-3">
-              <div className="flex items-center justify-between px-2">
+            <div className="rounded-xl border border-slate-900 bg-slate-950/60 p-4 space-y-3 flex flex-col">
+              <div className="flex items-center justify-between px-1">
                 <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   Standard SOP Registry
                 </h3>
                 <span className="text-xs text-cyan-400 font-mono">
-                  {runbooks.length} Docs
+                  {totalCount} {totalCount === 1 ? "Doc" : "Docs"}
                 </span>
               </div>
 
+              {/* Search & Tag Filter */}
               <div className="space-y-2">
-                {runbooks.map((rb) => {
-                  const isSelected = selectedRunbook?.id === rb.id;
-                  return (
+                <div className="relative">
+                  <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-slate-500" />
+                  <input
+                    type="text"
+                    aria-label="Search runbooks"
+                    placeholder="Search title or SOP text..."
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                  {searchInput && (
                     <button
-                      key={rb.id}
-                      onClick={() => setSelectedRunbook(rb)}
-                      className={`w-full text-left p-3.5 rounded-lg border transition-all ${
-                        isSelected
-                          ? "bg-slate-900 border-cyan-800/80 shadow-sm"
-                          : "bg-slate-900/30 border-slate-900 hover:border-slate-800"
-                      }`}
+                      type="button"
+                      aria-label="Clear search"
+                      onClick={() => setSearchInput("")}
+                      className="absolute right-2 top-2 text-slate-500 hover:text-slate-300"
                     >
-                      <div className="text-sm font-semibold text-slate-200">
-                        {rb.title}
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                        {rb.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400"
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                      </div>
+                      <X className="h-3.5 w-3.5" />
                     </button>
-                  );
-                })}
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Tag className="h-3.5 w-3.5 absolute left-3 top-2.5 text-slate-500" />
+                    <input
+                      type="text"
+                      aria-label="Filter by tag"
+                      placeholder="Filter by tag (e.g. twilio)..."
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  {(searchInput || tagInput) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchInput("");
+                        setTagInput("");
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] text-slate-300"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
               </div>
+
+              <div className="space-y-2 flex-1 max-h-[540px] overflow-y-auto pr-1">
+                {!loading && runbooks.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-slate-500">
+                    No runbooks match the active search or tag filter.
+                  </div>
+                ) : (
+                  runbooks.map((rb) => {
+                    const isSelected = selectedRunbook?.id === rb.id;
+                    return (
+                      <button
+                        key={rb.id}
+                        onClick={() => setSelectedRunbook(rb)}
+                        className={`w-full text-left p-3.5 rounded-lg border transition-all ${
+                          isSelected
+                            ? "bg-slate-900 border-cyan-800/80 shadow-sm"
+                            : "bg-slate-900/30 border-slate-900 hover:border-slate-800"
+                        }`}
+                      >
+                        <div className="text-sm font-semibold text-slate-200">
+                          {rb.title}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                          {rb.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400"
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="pt-3 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
+                  <span>
+                    Page {page} of {totalPages}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page <= 1 || loading}
+                      className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-slate-700 disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages || loading}
+                      className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:border-slate-700 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Runbook Markdown Viewer */}
@@ -281,7 +441,16 @@ export default function RunbooksPage() {
                       <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-400 font-mono">
                         <span>ID: {selectedRunbook.id}</span>
                         <span>•</span>
-                        <span>Embed: {health?.embeddingModel || "gemini-embedding-001"} (768d)</span>
+                        <span>
+                          Embed:{" "}
+                          {selectedRunbook.embeddingProvider
+                            ? `${selectedRunbook.embeddingProvider} / `
+                            : ""}
+                          {selectedRunbook.embeddingModel ||
+                            health?.embeddingModel ||
+                            "gemini-embedding-001"}{" "}
+                          (768d)
+                        </span>
                         <span>•</span>
                         <span>
                           Updated:{" "}

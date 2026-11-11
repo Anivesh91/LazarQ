@@ -21,6 +21,8 @@ export interface RunbookRecord {
   title: string;
   content: string;
   tags: string[];
+  embeddingProvider: string;
+  embeddingModel: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,21 +44,28 @@ export class RunbookService {
     // Embed combined title and markdown content for optimal semantic retrieval
     const textToEmbed = `${title.trim()}\n\n${content.trim()}`;
     const embedding = await embeddingService.generateEmbedding(textToEmbed);
+    const { provider: embeddingProvider, model: embeddingModel } =
+      embeddingService.getProvenance();
 
     const id = randomUUID();
     const vectorString = `[${embedding.join(",")}]`;
 
-    logger.info({ title, tags }, "Persisting new Runbook with vector embedding");
+    logger.info(
+      { title, tags, embeddingProvider, embeddingModel },
+      "Persisting new Runbook with vector embedding"
+    );
 
     // Persist using raw SQL to cast the 768-dim float array to pgvector
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "Runbook" ("id", "title", "content", "tags", "embedding", "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5::vector, NOW(), NOW())`,
+      `INSERT INTO "Runbook" ("id", "title", "content", "tags", "embedding", "embeddingProvider", "embeddingModel", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5::vector, $6, $7, NOW(), NOW())`,
       id,
       title.trim(),
       content.trim(),
       tags,
-      vectorString
+      vectorString,
+      embeddingProvider,
+      embeddingModel
     );
 
     const created = await prisma.runbook.findUnique({
@@ -66,6 +75,8 @@ export class RunbookService {
         title: true,
         content: true,
         tags: true,
+        embeddingProvider: true,
+        embeddingModel: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -114,6 +125,8 @@ export class RunbookService {
           title: true,
           content: true,
           tags: true,
+          embeddingProvider: true,
+          embeddingModel: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -134,6 +147,8 @@ export class RunbookService {
         title: true,
         content: true,
         tags: true,
+        embeddingProvider: true,
+        embeddingModel: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -168,16 +183,21 @@ export class RunbookService {
     if (contentChanged) {
       const textToEmbed = `${newTitle}\n\n${newContent}`;
       const embedding = await embeddingService.generateEmbedding(textToEmbed);
+      const { provider: embeddingProvider, model: embeddingModel } =
+        embeddingService.getProvenance();
       const vectorString = `[${embedding.join(",")}]`;
 
       await prisma.$executeRawUnsafe(
         `UPDATE "Runbook"
-         SET "title" = $1, "content" = $2, "tags" = $3, "embedding" = $4::vector, "updatedAt" = NOW()
-         WHERE "id" = $5`,
+         SET "title" = $1, "content" = $2, "tags" = $3, "embedding" = $4::vector,
+             "embeddingProvider" = $5, "embeddingModel" = $6, "updatedAt" = NOW()
+         WHERE "id" = $7`,
         newTitle,
         newContent,
         newTags,
         vectorString,
+        embeddingProvider,
+        embeddingModel,
         id
       );
     } else {

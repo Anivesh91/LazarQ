@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { startHealerWorker, stopHealerWorker } from "./workers/healer.worker";
+import { getIntakeQueueName } from "./config/env";
 import { prisma } from "./db/prisma";
 import { redis } from "./config/redis";
 import { Queue } from "bullmq";
@@ -7,9 +8,10 @@ import { Queue } from "bullmq";
 async function verifyLiveWorker() {
   console.log("=== Testing Healer Worker Live Ingestion ===\n");
 
-  const intakeQueue = new Queue("dlq-healer-intake", { connection: redis });
+  const intakeQueueName = getIntakeQueueName();
+  const intakeQueue = new Queue(intakeQueueName, { connection: redis });
   const waitingBefore = await intakeQueue.getWaitingCount();
-  console.log(`1. Jobs currently waiting in [dlq-healer-intake]: ${waitingBefore}`);
+  console.log(`1. Jobs currently waiting in [${intakeQueueName}]: ${waitingBefore}`);
 
   // Start Healer Worker
   console.log("2. Starting Healer Worker to consume Smart DLQ...");
@@ -19,7 +21,7 @@ async function verifyLiveWorker() {
   await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const waitingAfter = await intakeQueue.getWaitingCount();
-  console.log(`3. Jobs remaining in [dlq-healer-intake]: ${waitingAfter}`);
+  console.log(`3. Jobs remaining in [${intakeQueueName}]: ${waitingAfter}`);
 
   // Query PostgreSQL
   const incidents = await prisma.incident.findMany({

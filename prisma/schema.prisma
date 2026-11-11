@@ -38,8 +38,9 @@ model Incident {
   queueName          String
   jobId              String
   jobName            String
-  payloadSnapshot    Json
-  expectedJsonSchema Json?
+  payloadSnapshot           Json
+  encryptedExecutionPayload Json?
+  expectedJsonSchema        Json?
   errorMessage       String
   stackTrace         String?
   attemptsMade       Int
@@ -47,6 +48,9 @@ model Incident {
   status             IncidentStatus   @default(INGESTED)
   idempotencyKey     String           @unique
   fingerprint        String?
+  lineageRootId      String?
+  parentIncidentId   String?
+  replayDepth        Int              @default(0)
   matchedRunbookId   String?
   matchedRunbook     Runbook?         @relation(fields: [matchedRunbookId], references: [id])
   aiDiagnosis        Json?
@@ -59,22 +63,28 @@ model Incident {
   recoveryAttempts   RecoveryAttempt[]
   auditLogs          AuditLog[]
 
-  @@unique([queueName, jobId, attemptsMade])
+  @@unique([sourceId, queueName, jobId, attemptsMade])
   @@index([status])
   @@index([queueName])
   @@index([fingerprint])
+  @@index([lineageRootId])
+  @@index([parentIncidentId])
 }
 
 model Runbook {
-  id        String   @id @default(uuid())
-  title     String
-  content   String   @db.Text
-  embedding Unsupported("vector(768)")?
-  tags      String[] @default([])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(uuid())
+  title             String
+  content           String   @db.Text
+  embedding         Unsupported("vector(768)")?
+  embeddingProvider String   @default("gemini")
+  embeddingModel    String   @default("gemini-embedding-001")
+  tags              String[] @default([])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   incidents Incident[]
+
+  @@index([embeddingProvider, embeddingModel])
 }
 
 model RecoveryAttempt {

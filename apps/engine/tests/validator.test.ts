@@ -312,4 +312,119 @@ describe("Day 9: Deterministic Validation Gate (5-Stage Sandbox)", () => {
     expect(res.body.status).toBe("AWAITING_APPROVAL");
     expect(res.body.validation.passed).toBe(true);
   });
+
+  it("B10: enforces strict JSON Schema types, enums, ranges, nested required fields, and formats in Stage 1", () => {
+    const strictSchema = {
+      type: "object",
+      required: ["orderId", "amount", "channel", "customer"],
+      additionalProperties: false,
+      properties: {
+        orderId: { type: "string" },
+        amount: { type: "number", minimum: 1 },
+        channel: { type: "string", enum: ["SMS", "EMAIL"] },
+        customer: {
+          type: "object",
+          required: ["email"],
+          properties: {
+            email: { type: "string", format: "email" },
+          },
+        },
+      },
+    };
+
+    const makeContext = (proposedPayload: Record<string, any>): any => ({
+      incident: {
+        id: "inc-b10",
+        queueName: "order-queue",
+        status: "PROPOSAL_READY",
+        attemptsMade: 3,
+        configuredAttempts: 3,
+        payloadSnapshot: {
+          orderId: "ORD-1",
+          amount: 100,
+          channel: "SMS",
+          customer: { email: "ok@example.com" },
+        },
+        expectedJsonSchema: strictSchema,
+      },
+      proposal: {
+        classification: "TRANSIENT",
+        action: "MUTATE_AND_RETRY",
+        confidence: 0.9,
+        delaySeconds: 10,
+        mutations: [],
+        rootCause: "Transient",
+        reasoning: "Schema check",
+      },
+      proposedPayload,
+    });
+
+    // Wrong primitive type: channel: 4 (audit repro)
+    const wrongType = deterministicValidator.validate(
+      makeContext({
+        orderId: "ORD-1",
+        amount: 100,
+        channel: 4,
+        customer: { email: "ok@example.com" },
+      })
+    );
+    expect(wrongType.passed).toBe(false);
+    expect(wrongType.failedStage).toBe(1);
+    expect(wrongType.rejectionReason).toContain("channel");
+
+    // Enum + range + nested missing email + invalid format
+    const enumAndRange = deterministicValidator.validate(
+      makeContext({
+        orderId: "ORD-1",
+        amount: -5,
+        channel: "PIGEON",
+        customer: { email: "not-an-email" },
+      })
+    );
+    expect(enumAndRange.passed).toBe(false);
+    expect(enumAndRange.failedStage).toBe(1);
+
+    const missingNested = deterministicValidator.validate(
+      makeContext({
+        orderId: "ORD-1",
+        amount: 100,
+        channel: "EMAIL",
+        customer: {},
+      })
+    );
+    expect(missingNested.passed).toBe(false);
+    expect(missingNested.failedStage).toBe(1);
+    expect(missingNested.rejectionReason).toContain("customer.email");
+
+    // Valid payload passes all 5 stages
+    const valid = deterministicValidator.validate(
+      makeContext({
+        orderId: "ORD-1",
+        amount: 100,
+        channel: "EMAIL",
+        customer: { email: "ok@example.com" },
+      })
+    );
+    expect(valid.passed).toBe(true);
+  });
+
+  it("B10: rejects invalid expectedJsonSchema on POST /api/incidents/ingest with 400 VALIDATION_ERROR", async () => {
+    const res = await request(app)
+      .post("/api/incidents/ingest")
+      .send({
+        idempotencyKey: `b10:bad-schema:${Date.now()}`,
+        source: "val-test",
+        queueName: "order-queue",
+        jobId: `job-bad-schema-${Date.now()}`,
+        jobName: "process-order",
+        payloadSnapshot: { orderId: "ORD-BAD-SCHEMA" },
+        expectedJsonSchema: { type: "invalid-schema-type" },
+        errorMessage: "Twilio Error 20429",
+        attemptsMade: 3,
+        configuredAttempts: 3,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+  });
 });

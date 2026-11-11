@@ -1,5 +1,5 @@
 import { orderQueue } from "./queues/order.queue";
-import { orderWorker } from "./workers/order.worker";
+import { orderHealer, orderWorker } from "./workers/order.worker";
 import { Queue } from "bullmq";
 import { redisConnection } from "./config/redis";
 import { IncidentSnapshot } from "@dlq-healer/sdk";
@@ -68,6 +68,7 @@ async function runTest() {
   }
 
   await orderWorker.close();
+  await orderHealer.close();
   await orderQueue.close();
   await intakeQueue.close();
   await redisConnection.quit();

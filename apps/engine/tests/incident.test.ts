@@ -89,4 +89,68 @@ describe("Incident Ingestion Service", () => {
     expect(list.pagination.total).toBeGreaterThanOrEqual(1);
     expect(list.pagination.page).toBe(1);
   });
+
+  it("B15: namespaces deduplication by sourceId so different apps with identical queue/jobId/attempts create separate incidents", async () => {
+    const sharedQueue = `b15-shared-queue-${Date.now()}`;
+    const sharedJobId = "shared-job-42";
+    const createdIds: string[] = [];
+
+    try {
+      const appA = await incidentService.ingestSnapshot({
+        idempotencyKey: `app-a:${sharedQueue}:${sharedJobId}:3`,
+        source: "app-a",
+        queueName: sharedQueue,
+        jobId: sharedJobId,
+        jobName: "process-order",
+        payloadSnapshot: { orderId: "ORD-A" },
+        errorMessage: "Timeout error",
+        attemptsMade: 3,
+        configuredAttempts: 3,
+      });
+      createdIds.push(appA.incident.id);
+
+      const appB = await incidentService.ingestSnapshot({
+        idempotencyKey: `app-b:${sharedQueue}:${sharedJobId}:3`,
+        source: "app-b",
+        queueName: sharedQueue,
+        jobId: sharedJobId,
+        jobName: "process-order",
+        payloadSnapshot: { orderId: "ORD-B" },
+        errorMessage: "Timeout error",
+        attemptsMade: 3,
+        configuredAttempts: 3,
+      });
+      createdIds.push(appB.incident.id);
+
+      expect(appA.isDuplicate).toBe(false);
+      expect(appB.isDuplicate).toBe(false);
+      expect(appA.incident.id).not.toBe(appB.incident.id);
+      expect(appA.incident.sourceId).toBe("app-a");
+      expect(appB.incident.sourceId).toBe("app-b");
+
+      // Same sourceId + queueName + jobId + attemptsMade deduplicates even with a differing key format
+      const appADup = await incidentService.ingestSnapshot({
+        idempotencyKey: `app-a:alt-key:${sharedQueue}:${sharedJobId}:3`,
+        source: "app-a",
+        queueName: sharedQueue,
+        jobId: sharedJobId,
+        jobName: "process-order",
+        payloadSnapshot: { orderId: "ORD-A" },
+        errorMessage: "Timeout error",
+        attemptsMade: 3,
+        configuredAttempts: 3,
+      });
+      expect(appADup.isDuplicate).toBe(true);
+      expect(appADup.incident.id).toBe(appA.incident.id);
+    } finally {
+      if (createdIds.length > 0) {
+        await prisma.auditLog.deleteMany({
+          where: { incidentId: { in: createdIds } },
+        });
+        await prisma.incident.deleteMany({
+          where: { id: { in: createdIds } },
+        });
+      }
+    }
+  });
 });

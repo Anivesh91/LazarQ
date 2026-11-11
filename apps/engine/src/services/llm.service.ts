@@ -1,8 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
-import { env } from "../config/env";
+import {
+  getLlmModel,
+  getLlmProvider,
+  isUsableLlmApiKey,
+} from "../config/env";
 import { logger } from "../config/logger";
 import { AppError } from "../middleware/error-handler";
+import { assertSafeJsonValue } from "../sandbox/mutation-safety";
 
 export const MutationSchema = z.object({
   field: z.string().min(1),
@@ -82,25 +87,110 @@ async function withBoundedRetry<T>(
   return fn();
 }
 
+const RECIPIENT_EMAIL_KEYS = new Set([
+  "email",
+  "customeremail",
+  "useremail",
+  "fallbackemail",
+]);
+
+const RELEVANCE_STOP_WORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "into",
+  "this",
+  "that",
+  "are",
+  "not",
+  "must",
+  "can",
+  "when",
+  "error",
+  "errors",
+  "failed",
+  "failure",
+  "exception",
+  "worker",
+  "queue",
+  "job",
+  "payload",
+  "step",
+  "steps",
+  "retry",
+  "replay",
+  "after",
+  "runbook",
+  "remediation",
+]);
+
 export class LLMService {
   private client: GoogleGenAI | null = null;
-  private readonly modelName: string;
+  private cachedClientKey: string | null = null;
+  private readonly explicitApiKey?: string;
+  private readonly explicitModelName?: string;
 
   constructor(apiKey?: string, modelName?: string) {
-    const key = apiKey || env.LLM_API_KEY;
-    this.modelName = modelName || env.LLM_MODEL || "gemini-3.5-flash-lite";
-
-    if (key && key !== "your-llm-api-key-here") {
-      this.client = new GoogleGenAI({ apiKey: key });
+    if (apiKey !== undefined) {
+      this.explicitApiKey = apiKey;
     }
+    if (modelName !== undefined) {
+      this.explicitModelName = modelName;
+    }
+
+    const initialKey = this.explicitApiKey ?? process.env.LLM_API_KEY;
+    if (isUsableLlmApiKey(initialKey)) {
+      this.client = new GoogleGenAI({ apiKey: initialKey!.trim() });
+      this.cachedClientKey = initialKey!.trim();
+    }
+  }
+
+  private resolveActiveClient(): { client: GoogleGenAI | null; modelName: string } {
+    const provider = getLlmProvider();
+    const modelName = this.explicitModelName || getLlmModel();
+
+    if (provider === "mock") {
+      return { client: null, modelName: "mock" };
+    }
+
+    const activeKey =
+      this.explicitApiKey !== undefined
+        ? this.explicitApiKey
+        : process.env.LLM_API_KEY ?? "";
+
+    if (!isUsableLlmApiKey(activeKey)) {
+      if (process.env.NODE_ENV === "production") {
+        throw new AppError(
+          `LLM_API_KEY is missing or placeholder in production while LLM_PROVIDER=${provider}; refusing silent mock fallback (set LLM_PROVIDER=mock explicitly if intended)`,
+          503,
+          "AI_PROVIDER_UNCONFIGURED"
+        );
+      }
+      return { client: null, modelName: "mock" };
+    }
+
+    const trimmedKey = activeKey.trim();
+    if (!this.client || this.cachedClientKey !== trimmedKey) {
+      this.client = new GoogleGenAI({ apiKey: trimmedKey });
+      this.cachedClientKey = trimmedKey;
+    }
+
+    return { client: this.client, modelName };
   }
 
   /**
    * Generates a structured JSON repair proposal using Google Gemini LLM.
    */
   async generateRepairProposal(input: DiagnoseInput): Promise<RepairProposal> {
-    if (!this.client) {
-      logger.warn("LLM API key not configured; using deterministic mock repair planner");
+    const { client, modelName } = this.resolveActiveClient();
+
+    if (!client) {
+      logger.warn(
+        { provider: getLlmProvider(), model: modelName },
+        "Using deterministic mock repair planner"
+      );
       return this.generateMockProposal(input);
     }
 
@@ -145,13 +235,12 @@ ${input.runbookTitle ? `Title: ${input.runbookTitle}\nContent:\n${input.runbookC
 Generate the JSON remediation proposal now.`;
 
     try {
-      logger.info({ model: this.modelName, jobName: input.jobName }, "Requesting structured repair proposal from Gemini");
+      logger.info({ model: modelName, jobName: input.jobName }, "Requesting structured repair proposal from Gemini");
 
       const response = await withBoundedRetry(
         async () => {
-          if (!this.client) throw new Error("LLM client not initialized");
-          return this.client.models.generateContent({
-            model: this.modelName,
+          return client.models.generateContent({
+            model: modelName,
             contents: `${systemPrompt}\n\n${userPrompt}`,
             config: {
               responseMimeType: "application/json",
@@ -177,6 +266,8 @@ Generate the JSON remediation proposal now.`;
         parsedJson = JSON.parse(cleaned);
       }
 
+      assertSafeJsonValue(parsedJson, "llmProposal");
+
       // Validate against strict Zod schema
       const validatedProposal = RepairProposalSchema.parse(parsedJson);
       logger.info(
@@ -195,33 +286,167 @@ Generate the JSON remediation proposal now.`;
     }
   }
 
+  private hasRecipientEmail(
+    payload: Record<string, any>,
+    depth = 0
+  ): boolean {
+    if (!payload || typeof payload !== "object" || depth > 2) {
+      return false;
+    }
+    for (const key of Object.keys(payload)) {
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+      const val = payload[key];
+      if (
+        RECIPIENT_EMAIL_KEYS.has(key.toLowerCase()) &&
+        typeof val === "string" &&
+        val.trim().length > 0
+      ) {
+        return true;
+      }
+      if (val && typeof val === "object" && !Array.isArray(val)) {
+        if (this.hasRecipientEmail(val, depth + 1)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private extractDomainTokens(text: string): Set<string> {
+    const tokens = new Set<string>();
+    const rawMatches = text.match(/[A-Za-z0-9]+/g) || [];
+    for (const match of rawMatches) {
+      const splitCamel = match
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .split(/\s+/);
+      const full = match.toLowerCase();
+      for (const candidate of splitCamel.length > 1 ? [full, ...splitCamel] : [full]) {
+        if (candidate.length < 3 || RELEVANCE_STOP_WORDS.has(candidate)) {
+          continue;
+        }
+        tokens.add(candidate);
+      }
+    }
+    return tokens;
+  }
+
+  private isRunbookRelevant(input: DiagnoseInput): boolean {
+    const runbookText = [input.runbookTitle || "", input.runbookContent || ""]
+      .join("\n")
+      .trim();
+    if (!runbookText) {
+      return true;
+    }
+
+    const errLower = `${input.errorMessage} ${input.stackTrace || ""}`.toLowerCase();
+    const rbLower = runbookText.toLowerCase();
+
+    if (errLower.includes("20429") || errLower.includes("rate limit")) {
+      return (
+        rbLower.includes("20429") ||
+        rbLower.includes("rate limit") ||
+        rbLower.includes("rate-limit") ||
+        rbLower.includes("twilio") ||
+        rbLower.includes("sms")
+      );
+    }
+
+    if (errLower.includes("userid") || errLower.includes("validation")) {
+      return (
+        rbLower.includes("userid") ||
+        rbLower.includes("validation") ||
+        rbLower.includes("required field") ||
+        rbLower.includes("schema")
+      );
+    }
+
+    if (
+      errLower.includes("timeout") ||
+      errLower.includes("pool") ||
+      errLower.includes("connection")
+    ) {
+      return (
+        rbLower.includes("timeout") ||
+        rbLower.includes("pool") ||
+        rbLower.includes("connection") ||
+        rbLower.includes("postgres") ||
+        rbLower.includes("database")
+      );
+    }
+
+    const errorTokens = this.extractDomainTokens(
+      `${input.errorMessage} ${input.stackTrace || ""}`
+    );
+    const runbookTokens = this.extractDomainTokens(runbookText);
+    for (const tok of errorTokens) {
+      if (runbookTokens.has(tok)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Deterministic mock planner for unit tests & offline mode.
    */
   public generateMockProposal(input: DiagnoseInput): RepairProposal {
+    if (!this.isRunbookRelevant(input)) {
+      return {
+        classification: "UNKNOWN",
+        action: "QUARANTINE",
+        confidence: 0.35,
+        delaySeconds: 0,
+        mutations: [],
+        rootCause: `Matched runbook does not address error domain: ${input.errorMessage}`,
+        reasoning:
+          "Relevance gate detected mismatch between incident error domain and supplied runbook SOP; quarantining for operator inspection.",
+      };
+    }
+
     const err = input.errorMessage.toLowerCase();
 
     if (err.includes("20429") || err.includes("rate limit")) {
       const channelField =
         "channel" in input.payloadSnapshot
           ? "channel"
-          : "notificationChannel";
+          : "notificationChannel" in input.payloadSnapshot
+          ? "notificationChannel"
+          : null;
+      const currentChannel = channelField
+        ? String(input.payloadSnapshot[channelField] ?? "").toUpperCase()
+        : "";
+      const hasEmail = this.hasRecipientEmail(input.payloadSnapshot);
+
+      if (hasEmail && channelField && currentChannel !== "EMAIL") {
+        return {
+          classification: "TRANSIENT",
+          action: "MUTATE_AND_RETRY",
+          confidence: 0.95,
+          delaySeconds: 60,
+          mutations: [
+            {
+              field: channelField,
+              from: input.payloadSnapshot[channelField] || "SMS",
+              to: "EMAIL",
+              reason: "Switch to email fallback channel per Twilio 20429 rate limit SOP",
+            },
+          ],
+          rootCause: "Twilio outbound SMS rate limit exceeded (Error 20429)",
+          reasoning:
+            "Twilio concurrency limit saturated and recipient email is available. Runbook prescribes falling back to EMAIL notification channel.",
+        };
+      }
 
       return {
         classification: "TRANSIENT",
-        action: "MUTATE_AND_RETRY",
-        confidence: 0.95,
+        action: "RETRY",
+        confidence: 0.9,
         delaySeconds: 60,
-        mutations: [
-          {
-            field: channelField,
-            from: input.payloadSnapshot[channelField] || "SMS",
-            to: "EMAIL",
-            reason: "Switch to email fallback channel per Twilio 20429 rate limit SOP",
-          },
-        ],
+        mutations: [],
         rootCause: "Twilio outbound SMS rate limit exceeded (Error 20429)",
-        reasoning: "Twilio concurrency limit saturated. Runbook prescribes falling back to EMAIL notification channel.",
+        reasoning:
+          "Twilio concurrency limit saturated, and payload lacks a fallback email/channel target. Scheduling exponential backoff RETRY per SOP.",
       };
     }
 
@@ -233,7 +458,8 @@ Generate the JSON remediation proposal now.`;
         delaySeconds: 0,
         mutations: [],
         rootCause: "Payload missing required field: userId",
-        reasoning: "User identifier cannot be synthesized without compromising referential integrity. Quarantining per safety policy.",
+        reasoning:
+          "User identifier cannot be synthesized without compromising referential integrity. Quarantining per safety policy.",
       };
     }
 
@@ -245,7 +471,8 @@ Generate the JSON remediation proposal now.`;
         delaySeconds: 30,
         mutations: [],
         rootCause: "Transient PostgreSQL connection pool exhaustion",
-        reasoning: "Database connection pool timed out during traffic spike. Safe to retry untouched after transient recovery.",
+        reasoning:
+          "Database connection pool timed out during traffic spike. Safe to retry untouched after transient recovery.",
       };
     }
 
@@ -256,7 +483,8 @@ Generate the JSON remediation proposal now.`;
       delaySeconds: 0,
       mutations: [],
       rootCause: `Unhandled failure: ${input.errorMessage}`,
-      reasoning: "No definitive SOP exists for this error. Quarantining for operator inspection.",
+      reasoning:
+        "No definitive SOP exists for this error. Quarantining for operator inspection.",
     };
   }
 }

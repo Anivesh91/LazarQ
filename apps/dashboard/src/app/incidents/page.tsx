@@ -80,7 +80,8 @@ export default function IncidentsPage() {
         }
       },
       [loadIncidents]
-    )
+    ),
+    loadIncidents
   );
 
   useEffect(() => {

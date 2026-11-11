@@ -11,6 +11,8 @@ import { replayService } from "../src/services/replay.service";
 import { replayResultObserver } from "../src/workers/replay-result.worker";
 import { queueReinjector } from "../src/replay/reinjector";
 import { runbookService } from "../src/services/runbook.service";
+import { embeddingService } from "../src/services/embedding.service";
+import { SEED_RUNBOOKS } from "../src/db/seed-runbooks";
 
 describe("Day 15: End-to-End Self-Healing Scenarios", () => {
   const createdIncidentIds: string[] = [];
@@ -19,19 +21,20 @@ describe("Day 15: End-to-End Self-Healing Scenarios", () => {
   const testQueueName = "e2e-order-queue";
 
   beforeAll(async () => {
-    // Ensure the Twilio remediation runbook is present
+    // Ensure the Twilio remediation runbook is present for the active embedding provenance
+    const { provider, model } = embeddingService.getProvenance();
+    const twilioRunbook = SEED_RUNBOOKS[0];
     const existing = await prisma.runbook.findFirst({
-      where: { title: "Twilio SMS Rate Limit (Error 20429) Remediation" },
+      where: {
+        title: twilioRunbook.title,
+        embeddingProvider: provider,
+        embeddingModel: model,
+      },
+      select: { id: true },
     });
 
     if (!existing) {
-      const created = await runbookService.createRunbook({
-        title: "Twilio SMS Rate Limit (Error 20429) Remediation",
-        tags: ["twilio", "rate-limit", "sms", "notification"],
-        content: `# Twilio SMS Rate Limit (Error 20429) Remediation
-## Remediation Strategy
-If SMS rate limited, mutate channel to EMAIL and retry immediately.`,
-      });
+      const created = await runbookService.createRunbook(twilioRunbook);
       createdRunbookIds.push(created.id);
     }
   });

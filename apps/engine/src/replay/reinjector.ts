@@ -2,14 +2,13 @@ import { Queue } from "bullmq";
 import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 import { AppError } from "../middleware/error-handler";
-import { INTAKE_QUEUE_NAME } from "../workers/healer.worker";
+import { getIntakeQueueName } from "../config/env";
 
 /**
  * System queues that can NEVER be targeted for re-injection
  * to prevent cascading ingestion loops.
  */
 const FORBIDDEN_QUEUES = new Set<string>([
-  INTAKE_QUEUE_NAME,
   "dlq-healer-intake",
   "dlq-healer-events",
 ]);
@@ -21,6 +20,11 @@ export interface ReinjectOptions {
   backoff?: {
     type: "exponential" | "fixed";
     delay: number;
+  };
+  lineage?: {
+    lineageRootId: string;
+    parentIncidentId: string;
+    replayDepth: number;
   };
 }
 
@@ -36,7 +40,7 @@ export class QueueReinjector {
     }
 
     const trimmed = queueName.trim();
-    if (FORBIDDEN_QUEUES.has(trimmed)) {
+    if (trimmed === getIntakeQueueName() || FORBIDDEN_QUEUES.has(trimmed)) {
       throw new AppError(
         `Cannot re-inject jobs into internal system queue: "${trimmed}"`,
         400,
@@ -98,7 +102,7 @@ export class QueueReinjector {
       "[Reinjector] Re-injecting repaired job into source queue"
     );
 
-    const job = await queue.add(jobName, payload, {
+    const jobOptions: Record<string, any> = {
       delay,
       jobId,
       removeOnComplete: false,
@@ -108,7 +112,12 @@ export class QueueReinjector {
         type: "exponential",
         delay: 2000,
       },
-    });
+    };
+    if (options.lineage) {
+      jobOptions.dlqLineage = options.lineage;
+    }
+
+    const job = await queue.add(jobName, payload, jobOptions);
 
     const assignedId = String(job.id || jobId);
 

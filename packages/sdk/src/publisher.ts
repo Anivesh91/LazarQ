@@ -1,13 +1,40 @@
+import { createHash } from "crypto";
 import { Queue } from "bullmq";
 import { IncidentSnapshot } from "./types";
+
+export interface SmartDLQPublisherOptions {
+  publishMaxAttempts?: number;
+  publishRetryDelayMs?: number;
+  fallbackHttpUrl?: string;
+  engineApiKey?: string;
+  onPublishFailed?: (snapshot: IncidentSnapshot, error: unknown) => void | Promise<void>;
+}
+
+/**
+ * Generates a BullMQ-safe deterministic jobId (free of colons & never purely numeric)
+ * so BullMQ queue.add() deduplication never rejects 4-part namespaced idempotencyKeys.
+ */
+export function toBullMQJobId(idempotencyKey: string): string {
+  const digest = createHash("sha256").update(idempotencyKey).digest("hex");
+  return `dlq_${digest}`;
+}
 
 export class SmartDLQPublisher {
   private intakeQueue: Queue<IncidentSnapshot>;
   private shuttingDown = false;
+  private readonly publishMaxAttempts: number;
+  private readonly publishRetryDelayMs: number;
+  private readonly fallbackHttpUrl?: string;
+  private readonly engineApiKey?: string;
+  private readonly onPublishFailed?: (
+    snapshot: IncidentSnapshot,
+    error: unknown
+  ) => void | Promise<void>;
 
   constructor(
     queueName: string = "dlq-healer-intake",
-    connectionOrUrl?: any
+    connectionOrUrl?: any,
+    options: SmartDLQPublisherOptions = {}
   ) {
     const connection =
       !connectionOrUrl || typeof connectionOrUrl === "string"
@@ -17,6 +44,12 @@ export class SmartDLQPublisher {
             enableReadyCheck: false,
           }
         : connectionOrUrl;
+
+    this.publishMaxAttempts = Math.max(1, options.publishMaxAttempts ?? 3);
+    this.publishRetryDelayMs = Math.max(10, options.publishRetryDelayMs ?? 100);
+    this.fallbackHttpUrl = options.fallbackHttpUrl?.replace(/\/+$/, "");
+    this.engineApiKey = options.engineApiKey;
+    this.onPublishFailed = options.onPublishFailed;
 
     this.intakeQueue = new Queue<IncidentSnapshot>(queueName, {
       connection,
@@ -44,22 +77,81 @@ export class SmartDLQPublisher {
     );
   }
 
+  private async publishViaHttpFallback(snapshot: IncidentSnapshot): Promise<string> {
+    if (!this.fallbackHttpUrl) {
+      throw new Error("No HTTP fallback URL configured");
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.engineApiKey) {
+      headers["x-api-key"] = this.engineApiKey;
+    }
+
+    const res = await fetch(`${this.fallbackHttpUrl}/api/incidents/ingest`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(snapshot),
+    });
+
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      throw new Error(
+        `HTTP fallback ingestion failed (${res.status}): ${bodyText || res.statusText}`
+      );
+    }
+
+    const data = (await res.json().catch(() => ({}))) as { incidentId?: string };
+    return data.incidentId || snapshot.idempotencyKey;
+  }
+
   /**
-   * Publishes a captured terminal failure snapshot into the Smart DLQ intake queue.
-   * Uses the idempotencyKey as the BullMQ jobId to prevent duplicate queued items.
+   * Publishes a captured terminal failure snapshot into the Smart DLQ intake queue
+   * with bounded retries and optional HTTP fallback ingestion.
    */
   async publish(snapshot: IncidentSnapshot): Promise<string> {
-    try {
-      const job = await this.intakeQueue.add("incident", snapshot, {
-        jobId: snapshot.idempotencyKey,
-      });
-      return job?.id || snapshot.idempotencyKey;
-    } catch (err: any) {
-      if (err.message?.includes("Job already exists") || err.message?.includes("duplicate")) {
-        return snapshot.idempotencyKey;
+    const bullMqJobId = toBullMQJobId(snapshot.idempotencyKey);
+    let lastErr: unknown;
+
+    for (let attempt = 1; attempt <= this.publishMaxAttempts; attempt++) {
+      try {
+        const job = await this.intakeQueue.add("incident", snapshot, {
+          jobId: bullMqJobId,
+        });
+        return job?.id || bullMqJobId;
+      } catch (err: any) {
+        if (
+          err?.message?.includes("Job already exists") ||
+          err?.message?.includes("duplicate")
+        ) {
+          return snapshot.idempotencyKey;
+        }
+        lastErr = err;
+        if (attempt < this.publishMaxAttempts && !this.shuttingDown) {
+          const delay = this.publishRetryDelayMs * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
-      throw err;
     }
+
+    if (this.fallbackHttpUrl) {
+      try {
+        return await this.publishViaHttpFallback(snapshot);
+      } catch (httpErr) {
+        lastErr = httpErr;
+      }
+    }
+
+    if (this.onPublishFailed) {
+      try {
+        await this.onPublishFailed(snapshot, lastErr);
+      } catch {
+        // Never allow error hook to mask original publish failure
+      }
+    }
+
+    throw lastErr;
   }
 
   async close(): Promise<void> {

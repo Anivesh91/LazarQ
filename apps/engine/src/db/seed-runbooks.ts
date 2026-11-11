@@ -1,4 +1,5 @@
 import { runbookService } from "../services/runbook.service";
+import { embeddingService } from "../services/embedding.service";
 import { prisma } from "./prisma";
 import { logger } from "../config/logger";
 
@@ -54,7 +55,12 @@ Database connection pool exhaustion caused by sudden spike in worker concurrency
 ];
 
 export async function seedRunbooks() {
-  logger.info("Starting Runbook knowledge base seeding...");
+  const { provider: activeProvider, model: activeModel } =
+    embeddingService.getProvenance();
+  logger.info(
+    { embeddingProvider: activeProvider, embeddingModel: activeModel },
+    "Starting Runbook knowledge base seeding..."
+  );
 
   for (const item of SEED_RUNBOOKS) {
     const existing = await prisma.runbook.findFirst({
@@ -62,12 +68,38 @@ export async function seedRunbooks() {
     });
 
     if (existing) {
-      if (existing.content.includes('mutate "notificationChannel" from "SMS" to "EMAIL"')) {
-        await prisma.runbook.update({
-          where: { id: existing.id },
-          data: { content: item.content },
-        });
-        logger.info({ title: item.title }, "Updated seeded Runbook channel fallback instructions");
+      const legacyFallbackContent = existing.content.includes(
+        'mutate "notificationChannel" from "SMS" to "EMAIL"'
+      );
+      const provenanceMismatch =
+        existing.embeddingProvider !== activeProvider ||
+        existing.embeddingModel !== activeModel;
+
+      if (legacyFallbackContent || provenanceMismatch) {
+        const textToEmbed = `${item.title.trim()}\n\n${item.content.trim()}`;
+        const embedding = await embeddingService.generateEmbedding(textToEmbed);
+        const vectorString = `[${embedding.join(",")}]`;
+
+        await prisma.$executeRawUnsafe(
+          `UPDATE "Runbook"
+           SET "content" = $1, "tags" = $2, "embedding" = $3::vector,
+               "embeddingProvider" = $4, "embeddingModel" = $5, "updatedAt" = NOW()
+           WHERE "id" = $6`,
+          item.content.trim(),
+          item.tags,
+          vectorString,
+          activeProvider,
+          activeModel,
+          existing.id
+        );
+        logger.info(
+          {
+            title: item.title,
+            embeddingProvider: activeProvider,
+            embeddingModel: activeModel,
+          },
+          "Updated seeded Runbook content/embedding to match active provider provenance"
+        );
       } else {
         logger.info({ title: item.title }, "Runbook already exists, skipping");
       }

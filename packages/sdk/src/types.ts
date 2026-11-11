@@ -1,3 +1,17 @@
+export interface IncidentLineage {
+  lineageRootId?: string;
+  parentIncidentId: string;
+  replayDepth?: number;
+}
+
+export interface EncryptedReplayEnvelope {
+  v: 1;
+  alg: "aes-256-gcm";
+  iv: string;
+  tag: string;
+  ct: string;
+}
+
 export interface IncidentSnapshot {
   idempotencyKey: string;
   source: string;
@@ -5,12 +19,14 @@ export interface IncidentSnapshot {
   jobId: string;
   jobName: string;
   payloadSnapshot: Record<string, any>;
+  replayEnvelope?: EncryptedReplayEnvelope;
   expectedJsonSchema?: Record<string, any>;
   errorMessage: string;
   stackTrace?: string;
   attemptsMade: number;
   configuredAttempts: number;
   occurredAt: string;
+  lineage?: IncidentLineage;
 }
 
 export interface DLQHealerConfig {
@@ -46,6 +62,34 @@ export interface DLQHealerConfig {
    * Optional JSON Schema representing expected valid payload.
    */
   expectedJsonSchema?: Record<string, any>;
+
+  /**
+   * Optional 32-byte encryption key (64 hex chars, 32-byte base64, or >=32 char secret)
+   * used to seal the unredacted execution payload with AES-256-GCM inside replayEnvelope.
+   * Defaults to process.env.DLQ_PAYLOAD_ENCRYPTION_KEY when present.
+   */
+  payloadEncryptionKey?: string;
+
+  /**
+   * Optional Engine base URL for durable HTTP fallback ingestion if Redis publish fails.
+   */
+  fallbackHttpUrl?: string;
+
+  /**
+   * Optional Engine API key sent on x-api-key when falling back to HTTP ingestion.
+   */
+  engineApiKey?: string;
+
+  /**
+   * Maximum publish retry attempts before falling back/failing.
+   * Default: 3
+   */
+  publishMaxAttempts?: number;
+
+  /**
+   * Optional callback invoked if terminal failure publication fails across all transports.
+   */
+  onPublishFailed?: (snapshot: IncidentSnapshot, error: unknown) => void | Promise<void>;
 
   /**
    * Whether to log SDK capture events.

@@ -1,13 +1,18 @@
+import { randomUUID } from "crypto";
+import { Prisma, Incident } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { logger } from "../config/logger";
 import { IncidentSnapshot } from "@dlq-healer/sdk";
-import { Incident } from "@prisma/client";
 import { eventBroadcaster } from "./event-broadcaster.service";
+import {
+  prepareIngestSnapshotData,
+  sanitizeIncidentForView,
+} from "./execution-payload.service";
 
 export class IncidentService {
   /**
    * Durably ingests a failure snapshot received from the intake queue into PostgreSQL.
-   * Ensures idempotency: duplicate deliveries with the same idempotencyKey will not create duplicates.
+   * Ensures idempotency: duplicate deliveries with the same idempotencyKey or source namespace key will not create duplicates.
    */
   async ingestSnapshot(snapshot: IncidentSnapshot): Promise<{
     incident: Incident;
@@ -19,18 +24,36 @@ export class IncidentService {
       queueName,
       jobId,
       jobName,
-      payloadSnapshot,
       expectedJsonSchema,
-      errorMessage,
-      stackTrace,
       attemptsMade,
       configuredAttempts,
       occurredAt,
+      lineage,
     } = snapshot;
 
-    // ── 1. Idempotency Check ──
-    const existing = await prisma.incident.findUnique({
-      where: { idempotencyKey },
+    const normalizedSourceId = source || "sdk-v1";
+    const normalizedJobId = String(jobId);
+
+    const {
+      sanitizedPayload,
+      sanitizedErrorMessage,
+      sanitizedStackTrace,
+      encryptedExecutionPayload,
+    } = prepareIngestSnapshotData(snapshot);
+
+    // ── 1. Idempotency Check (B15: sourceId namespaced) ──
+    const existing = await prisma.incident.findFirst({
+      where: {
+        OR: [
+          { idempotencyKey },
+          {
+            sourceId: normalizedSourceId,
+            queueName,
+            jobId: normalizedJobId,
+            attemptsMade,
+          },
+        ],
+      },
     });
 
     if (existing) {
@@ -38,74 +61,162 @@ export class IncidentService {
         { idempotencyKey, incidentId: existing.id },
         "Duplicate incident snapshot received; skipping creation."
       );
-      return { incident: existing, isDuplicate: true };
+      return {
+        incident: sanitizeIncidentForView(existing),
+        isDuplicate: true,
+      };
     }
 
     // ── 2. Atomic Transaction: Create Incident + Initial AuditLog ──
-    const incident = await prisma.$transaction(
-      async (tx) => {
-        const created = await tx.incident.create({
-          data: {
-            idempotencyKey,
-            sourceId: source || "sdk-v1",
-            queueName,
-            jobId: String(jobId),
-            jobName: jobName || "unknown",
-            payloadSnapshot: payloadSnapshot || {},
-            expectedJsonSchema: expectedJsonSchema || undefined,
-            errorMessage,
-            stackTrace: stackTrace || null,
-            attemptsMade,
-            configuredAttempts,
-            status: "INGESTED",
-            occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
-          },
-        });
+    let incident: Incident;
+    try {
+      incident = await prisma.$transaction(
+        async (tx) => {
+          const incidentId = randomUUID();
+          let lineageRootId: string = incidentId;
+          let parentIncidentId: string | null = null;
+          let replayDepth = 0;
 
-        await tx.auditLog.create({
-          data: {
-            incidentId: created.id,
-            action: "FAILURE_CAPTURED",
-            actor: "system/intake",
-            details: {
+          if (lineage?.parentIncidentId) {
+            const parent = await tx.incident.findUnique({
+              where: { id: lineage.parentIncidentId },
+              select: { id: true, lineageRootId: true, replayDepth: true },
+            });
+            if (parent) {
+              lineageRootId = parent.lineageRootId || parent.id;
+              parentIncidentId = parent.id;
+              replayDepth = (parent.replayDepth ?? 0) + 1;
+            } else {
+              lineageRootId = lineage.lineageRootId || incidentId;
+              parentIncidentId = lineage.parentIncidentId;
+              replayDepth = lineage.replayDepth ?? 1;
+            }
+          } else {
+            const recoveryAttemptMatch = normalizedJobId.match(
+              /^recovery-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:-\d+)?$/i
+            );
+            if (recoveryAttemptMatch) {
+              const attempt = await tx.recoveryAttempt.findUnique({
+                where: { id: recoveryAttemptMatch[1] },
+                include: {
+                  incident: {
+                    select: { id: true, lineageRootId: true, replayDepth: true },
+                  },
+                },
+              });
+              if (attempt?.incident) {
+                lineageRootId =
+                  attempt.incident.lineageRootId || attempt.incident.id;
+                parentIncidentId = attempt.incident.id;
+                replayDepth = (attempt.incident.replayDepth ?? 0) + 1;
+              }
+            }
+          }
+
+          const created = await tx.incident.create({
+            data: {
+              id: incidentId,
+              idempotencyKey,
+              sourceId: normalizedSourceId,
               queueName,
-              jobId: String(jobId),
+              jobId: normalizedJobId,
+              jobName: jobName || "unknown",
+              lineageRootId,
+              parentIncidentId,
+              replayDepth,
+              payloadSnapshot: sanitizedPayload,
+              encryptedExecutionPayload: encryptedExecutionPayload ?? undefined,
+              expectedJsonSchema: expectedJsonSchema || undefined,
+              errorMessage: sanitizedErrorMessage,
+              stackTrace: sanitizedStackTrace,
               attemptsMade,
               configuredAttempts,
-              errorMessage,
+              status: "INGESTED",
+              occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
             },
+          });
+
+          await tx.auditLog.create({
+            data: {
+              incidentId: created.id,
+              action: "FAILURE_CAPTURED",
+              actor: "system/intake",
+              details: {
+                sourceId: normalizedSourceId,
+                queueName,
+                jobId: normalizedJobId,
+                attemptsMade,
+                configuredAttempts,
+                errorMessage: sanitizedErrorMessage,
+                lineageRootId,
+                parentIncidentId,
+                replayDepth,
+              },
+            },
+          });
+
+          return created;
+        },
+        {
+          maxWait: 10000,
+          timeout: 15000,
+        }
+      );
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        const concurrentExisting = await prisma.incident.findFirst({
+          where: {
+            OR: [
+              { idempotencyKey },
+              {
+                sourceId: normalizedSourceId,
+                queueName,
+                jobId: normalizedJobId,
+                attemptsMade,
+              },
+            ],
           },
         });
-
-        return created;
-      },
-      {
-        maxWait: 10000,
-        timeout: 15000,
+        if (concurrentExisting) {
+          logger.info(
+            { idempotencyKey, incidentId: concurrentExisting.id },
+            "Concurrent duplicate incident snapshot detected; returning existing record."
+          );
+          return {
+            incident: sanitizeIncidentForView(concurrentExisting),
+            isDuplicate: true,
+          };
+        }
       }
-    );
+      throw err;
+    }
+
+    const safeIncident = sanitizeIncidentForView(incident);
 
     logger.info(
       {
-        incidentId: incident.id,
-        queueName: incident.queueName,
-        jobId: incident.jobId,
-        status: incident.status,
+        incidentId: safeIncident.id,
+        queueName: safeIncident.queueName,
+        jobId: safeIncident.jobId,
+        status: safeIncident.status,
       },
       "✅ Incident successfully persisted to PostgreSQL"
     );
 
-    // Broadcast live event to connected dashboards
-    eventBroadcaster.broadcast("incident:new", { incident });
+    // Broadcast live event to connected dashboards (without encryptedExecutionPayload)
+    eventBroadcaster.broadcast("incident:new", { incident: safeIncident });
 
-    return { incident, isDuplicate: false };
+    return { incident: safeIncident, isDuplicate: false };
   }
 
   /**
    * Fetches an incident by ID including its recovery attempts and audit trail.
    */
   async getIncidentById(id: string) {
-    return prisma.incident.findUnique({
+    const incident = await prisma.incident.findUnique({
       where: { id },
       include: {
         matchedRunbook: {
@@ -120,6 +231,7 @@ export class IncidentService {
         auditLogs: { orderBy: { createdAt: "asc" } },
       },
     });
+    return incident ? sanitizeIncidentForView(incident) : null;
   }
 
   /**
@@ -153,7 +265,7 @@ export class IncidentService {
     ]);
 
     return {
-      items,
+      items: items.map((item) => sanitizeIncidentForView(item)),
       pagination: {
         total,
         page,

@@ -10,14 +10,16 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "bullmq": "^5.52.0",
     "ioredis": "^5.6.1",
     "pino": "^9.6.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.0",
     "@types/node": "^22.15.0",
+    "typescript": "^5.8.0",
     "vitest": "^3.2.1"
   }
 }

@@ -9,7 +9,7 @@ dotenv.config();
 import { orderQueue } from "./queues/order.queue";
 import { redisConnection } from "./config/redis";
 import { server } from "./producer";
-import { orderWorker } from "./workers/order.worker";
+import { orderHealer, orderWorker } from "./workers/order.worker";
 
 console.log(
   `[Playground Dev] Producer API + BullMQ Worker (${orderWorker.name}) + @dlq-healer/sdk interceptor active`
@@ -24,10 +24,10 @@ async function shutdown(signal: string) {
 
   await Promise.allSettled([
     new Promise<void>((resolve) => server.close(() => resolve())),
-    orderWorker.close(),
+    orderWorker.close().then(() => orderHealer.close()),
     orderQueue.close(),
-    redisConnection.quit().catch(() => redisConnection.disconnect()),
   ]);
+  await redisConnection.quit().catch(() => redisConnection.disconnect());
 
   process.exit(0);
 }

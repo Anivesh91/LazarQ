@@ -18,14 +18,21 @@ vi.mock("../src/db/prisma", () => ({
 }));
 
 import { app } from "../src/app";
-import { env } from "../src/config/env";
+import {
+  getEmbeddingMode,
+  getEmbeddingModel,
+  getEmbeddingProvider,
+  getLlmMode,
+  getLlmModel,
+  getLlmProvider,
+} from "../src/config/env";
 
-describe("Phase 3 /health model metadata", () => {
+describe("Phase 3 & Phase 5 /health model metadata", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("exposes configured llmProvider, llmModel, and embeddingModel on GET /health", async () => {
+  it("exposes configured llmProvider, llmModel, llmMode, embeddingProvider, embeddingModel, and embeddingMode on GET /health", async () => {
     const res = await request(app).get("/health");
 
     expect(res.status).toBe(200);
@@ -33,9 +40,12 @@ describe("Phase 3 /health model metadata", () => {
       status: "ok",
       redis: "connected",
       database: "connected",
-      llmProvider: env.LLM_PROVIDER,
-      llmModel: env.LLM_MODEL,
-      embeddingModel: env.EMBEDDING_MODEL,
+      llmProvider: getLlmProvider(),
+      llmModel: getLlmModel(),
+      llmMode: getLlmMode(),
+      embeddingProvider: getEmbeddingProvider(),
+      embeddingModel: getEmbeddingModel(),
+      embeddingMode: getEmbeddingMode(),
     });
   });
 });

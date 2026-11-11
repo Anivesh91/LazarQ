@@ -1,12 +1,34 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import { prisma } from "../src/db/prisma";
 import { ragService } from "../src/services/rag.service";
 import { incidentService } from "../src/services/incident.service";
+import { runbookService } from "../src/services/runbook.service";
+import { embeddingService } from "../src/services/embedding.service";
+import { SEED_RUNBOOKS } from "../src/db/seed-runbooks";
 
 describe("Day 7: RAG Retrieval Pipeline", () => {
   const createdIncidentIds: string[] = [];
+  const createdRunbookIds: string[] = [];
+
+  beforeAll(async () => {
+    const { provider, model } = embeddingService.getProvenance();
+    for (const item of SEED_RUNBOOKS) {
+      const existing = await prisma.runbook.findFirst({
+        where: {
+          title: item.title,
+          embeddingProvider: provider,
+          embeddingModel: model,
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        const created = await runbookService.createRunbook(item);
+        createdRunbookIds.push(created.id);
+      }
+    }
+  });
 
   afterAll(async () => {
     // Teardown created incidents and audit logs
@@ -16,6 +38,11 @@ describe("Day 7: RAG Retrieval Pipeline", () => {
       });
       await prisma.incident.deleteMany({
         where: { id: { in: createdIncidentIds } },
+      });
+    }
+    if (createdRunbookIds.length > 0) {
+      await prisma.runbook.deleteMany({
+        where: { id: { in: createdRunbookIds } },
       });
     }
     await prisma.$disconnect();

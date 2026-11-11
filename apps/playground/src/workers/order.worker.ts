@@ -45,9 +45,9 @@ export const orderWorker = new Worker<OrderPayload>(
 );
 
 // ── Hook DLQ-Healer SDK to automatically intercept terminal failures! ──
-attachDLQHealer(orderWorker, {
+export const orderHealer = attachDLQHealer(orderWorker, {
   redisConnection,
-  intakeQueueName: "dlq-healer-intake",
+  intakeQueueName: process.env.INTAKE_QUEUE_NAME || "dlq-healer-intake",
   sourceId: "playground-app",
   redactFields: ["customerEmail", "ssn", "secret", "secretApiKey"],
   enableLogging: true,

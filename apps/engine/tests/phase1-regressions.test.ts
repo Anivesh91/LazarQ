@@ -6,10 +6,13 @@ const { mockPrisma } = vi.hoisted(() => {
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     recoveryAttempt: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
+      count: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
@@ -37,6 +40,7 @@ vi.mock("../src/db/prisma", () => ({
 import { LLMService } from "../src/services/llm.service";
 import { ReplayResultObserver } from "../src/workers/replay-result.worker";
 import { applyMutation, triageService } from "../src/services/triage.service";
+import { deterministicValidator } from "../src/sandbox/validator";
 import { ragService } from "../src/services/rag.service";
 import { circuitBreakerService } from "../src/services/circuit-breaker.service";
 import { incidentService } from "../src/services/incident.service";
@@ -51,6 +55,9 @@ describe("Phase 1 Regressions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     circuitBreakerService.reset();
+    mockPrisma.incident.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.recoveryAttempt.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.recoveryAttempt.count.mockResolvedValue(0);
     mockPrisma.$transaction.mockImplementation(async (ops: any) =>
       typeof ops === "function" ? ops(mockPrisma) : Promise.all(ops)
     );
@@ -97,7 +104,7 @@ describe("Phase 1 Regressions", () => {
       });
     });
 
-    it("mutates 'notificationChannel' when payloadSnapshot uses 'notificationChannel'", () => {
+    it("mutates 'notificationChannel' when payloadSnapshot uses 'notificationChannel' and email is present", () => {
       const service = new LLMService("your-llm-api-key-here");
       const proposal = service.generateMockProposal({
         jobName: "send-order-sms",
@@ -106,6 +113,7 @@ describe("Phase 1 Regressions", () => {
         payloadSnapshot: {
           orderId: "ORD-102",
           notificationChannel: "SMS",
+          customerEmail: "[REDACTED]",
         },
         attemptsMade: 3,
         configuredAttempts: 3,
@@ -118,6 +126,25 @@ describe("Phase 1 Regressions", () => {
         from: "SMS",
         to: "EMAIL",
       });
+    });
+
+    it("B24: falls back to RETRY (no EMAIL mutation) when rate-limit job lacks recipient email", () => {
+      const service = new LLMService("your-llm-api-key-here");
+      const proposal = service.generateMockProposal({
+        jobName: "send-order-sms",
+        queueName: "order-queue",
+        errorMessage: "Twilio Error 20429: Rate limit exceeded",
+        payloadSnapshot: {
+          orderId: "ORD-NO-EMAIL",
+          notificationChannel: "SMS",
+        },
+        attemptsMade: 3,
+        configuredAttempts: 3,
+      });
+
+      expect(proposal.action).toBe("RETRY");
+      expect(proposal.mutations).toEqual([]);
+      expect(proposal.delaySeconds).toBeGreaterThanOrEqual(60);
     });
   });
 
@@ -212,8 +239,8 @@ describe("Phase 1 Regressions", () => {
         status: "IN_PROGRESS",
         incident: { id: "inc-replay-1", fingerprint: fp },
       });
-      mockPrisma.recoveryAttempt.update.mockResolvedValue({ id: "attempt-1", status: "COMPLETED" });
-      mockPrisma.incident.update.mockResolvedValue({ id: "inc-replay-1", status: "RESOLVED" });
+      mockPrisma.recoveryAttempt.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.incident.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
 
       const mockQueue = {
@@ -231,8 +258,8 @@ describe("Phase 1 Regressions", () => {
 
       expect(count).toBe(1);
       expect(ensureSpy).toHaveBeenCalledWith("order-queue");
-      expect(mockPrisma.incident.update).toHaveBeenCalledWith({
-        where: { id: "inc-replay-1" },
+      expect(mockPrisma.incident.updateMany).toHaveBeenCalledWith({
+        where: { id: "inc-replay-1", status: { in: ["REPLAYING"] } },
         data: { status: "RESOLVED" },
       });
       expect(circuitBreakerService.canProcess(fp).state).toBe("CLOSED");
@@ -260,6 +287,89 @@ describe("Phase 1 Regressions", () => {
       applyMutation(payload, "meta.channel", "EMAIL");
       expect(payload.meta.channel).toBe("EMAIL");
     });
+
+    it("B04: blocks metadata.__proto__, nested __proto__ own-keys in values, array mutation traversal, and validator bypass", () => {
+      const payload: Record<string, any> = {
+        orderId: "ORD-1",
+        items: [{ sku: "A1" }],
+      };
+
+      expect(() =>
+        applyMutation(payload, "metadata.__proto__.someFlag", true)
+      ).toThrowError(/Unsafe mutation field path rejected/);
+
+      expect(() =>
+        applyMutation(payload, "metadata.constructor", { polluted: true })
+      ).toThrowError(/Unsafe mutation field path rejected/);
+
+      expect(() =>
+        applyMutation(payload, "metadata. prototype", true)
+      ).toThrowError(/Unsafe mutation field path rejected/);
+
+      expect(() =>
+        applyMutation(payload, "items.push", "bad")
+      ).toThrowError(/Unsafe mutation field path rejected/);
+
+      const poisonedTo = JSON.parse('{"__proto__":{"pollutedFromTo":true}}');
+      expect(() =>
+        applyMutation(payload, "metadata", poisonedTo)
+      ).toThrowError(/Unsafe mutation key rejected/);
+
+      expect(({} as any).someFlag).toBeUndefined();
+      expect(({} as any).pollutedFromTo).toBeUndefined();
+
+      // Validator Stage 3 must block unsafe mutation paths even before Stage 5 runs
+      const stage3Rejected = deterministicValidator.validate({
+        incident: {
+          id: "inc-b04-s3",
+          queueName: "order-queue",
+          status: "PROPOSAL_READY",
+          attemptsMade: 3,
+          configuredAttempts: 3,
+          payloadSnapshot: { orderId: "ORD-1" },
+        },
+        proposal: {
+          classification: "TRANSIENT",
+          action: "MUTATE_AND_RETRY",
+          confidence: 0.9,
+          delaySeconds: 0,
+          mutations: [
+            { field: "metadata.__proto__.someFlag", from: undefined, to: true },
+          ],
+          rootCause: "Attack",
+          reasoning: "Bypass",
+        },
+        proposedPayload: { orderId: "ORD-1", metadata: {} },
+      });
+
+      expect(stage3Rejected.passed).toBe(false);
+      expect(stage3Rejected.failedStage).toBe(3);
+
+      // Validator Stage 5 must block own-key constructor/prototype/__proto__ inside pre-stored proposedPayload
+      const stage5Rejected = deterministicValidator.validate({
+        incident: {
+          id: "inc-b04-s5",
+          queueName: "order-queue",
+          status: "PROPOSAL_READY",
+          attemptsMade: 3,
+          configuredAttempts: 3,
+          payloadSnapshot: { orderId: "ORD-1" },
+        },
+        proposal: {
+          classification: "TRANSIENT",
+          action: "RETRY",
+          confidence: 0.9,
+          delaySeconds: 0,
+          mutations: [],
+          rootCause: "Pre-stored object",
+          reasoning: "Check own keys",
+        },
+        proposedPayload: JSON.parse('{"orderId":"ORD-1","metadata":{"constructor":{"pwn":true}}}'),
+      });
+
+      expect(stage5Rejected.passed).toBe(false);
+      expect(stage5Rejected.failedStage).toBe(5);
+    });
   });
 
   describe("RAG & Triage ANALYSIS_FAILED Transitions", () => {
@@ -283,8 +393,8 @@ describe("Phase 1 Regressions", () => {
         /Gemini embedding API 503 unavailable/
       );
 
-      expect(mockPrisma.incident.update).toHaveBeenLastCalledWith({
-        where: { id: "inc-rag-fail" },
+      expect(mockPrisma.incident.updateMany).toHaveBeenLastCalledWith({
+        where: { id: "inc-rag-fail", status: { in: ["ANALYZING"] } },
         data: { status: "ANALYSIS_FAILED" },
       });
     });
@@ -428,8 +538,13 @@ describe("Phase 1 Regressions", () => {
 
       expect(outcome.status).toBe("ANALYSIS_FAILED");
       expect(circuitBreakerService.canProcess(fp).state).toBe("OPEN");
-      expect(mockPrisma.incident.update).toHaveBeenLastCalledWith({
-        where: { id: "inc-cb-throw" },
+      expect(mockPrisma.incident.updateMany).toHaveBeenLastCalledWith({
+        where: {
+          id: "inc-cb-throw",
+          status: {
+            in: ["INGESTED", "ANALYZING", "RAG_MATCHED", "PROPOSAL_READY"],
+          },
+        },
         data: { status: "ANALYSIS_FAILED" },
       });
     });

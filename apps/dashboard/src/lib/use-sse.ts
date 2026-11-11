@@ -2,21 +2,32 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { SSEEvent, SSEEventPayload } from "./types";
+import { REGISTERED_SSE_EVENT_TYPES } from "./sse-helpers";
 
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 
-export function useSSE(onEvent?: (event: SSEEvent) => void) {
+export function useSSE(
+  onEvent?: (event: SSEEvent) => void,
+  onReconnect?: () => void
+) {
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null);
   const [eventHistory, setEventHistory] = useState<SSEEvent[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const unmountedRef = useRef<boolean>(false);
+  const hasConnectedOnceRef = useRef<boolean>(false);
+  const shouldSyncOnOpenRef = useRef<boolean>(false);
   const onEventRef = useRef<((event: SSEEvent) => void) | undefined>(onEvent);
+  const onReconnectRef = useRef<(() => void) | undefined>(onReconnect);
 
   useEffect(() => {
     onEventRef.current = onEvent;
   }, [onEvent]);
+
+  useEffect(() => {
+    onReconnectRef.current = onReconnect;
+  }, [onReconnect]);
 
   const connect = useCallback(() => {
     if (typeof window === "undefined" || unmountedRef.current) return;
@@ -27,6 +38,9 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     }
 
     if (eventSourceRef.current) {
+      if (hasConnectedOnceRef.current) {
+        shouldSyncOnOpenRef.current = true;
+      }
       eventSourceRef.current.close();
     }
 
@@ -37,6 +51,13 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     es.onopen = () => {
       if (!unmountedRef.current && eventSourceRef.current === es) {
         setStatus("connected");
+        const isReconnect =
+          hasConnectedOnceRef.current || shouldSyncOnOpenRef.current;
+        hasConnectedOnceRef.current = true;
+        shouldSyncOnOpenRef.current = false;
+        if (isReconnect && onReconnectRef.current) {
+          onReconnectRef.current();
+        }
       }
     };
 
@@ -73,25 +94,14 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     };
 
     // Specific BullMQ DLQ-Healer events
-    const eventTypes = [
-      "connected",
-      "incident:new",
-      "incident:analyzing",
-      "incident:proposed",
-      "incident:approved",
-      "incident:replaying",
-      "incident:resolved",
-      "incident:quarantined",
-      "incident:failed",
-    ];
-
-    eventTypes.forEach((type) => {
+    REGISTERED_SSE_EVENT_TYPES.forEach((type) => {
       es.addEventListener(type, (e: MessageEvent) => handleMessage(type, e));
     });
 
     es.onerror = () => {
       if (unmountedRef.current || eventSourceRef.current !== es) return;
 
+      shouldSyncOnOpenRef.current = true;
       setStatus("disconnected");
       es.close();
 

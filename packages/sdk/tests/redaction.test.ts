@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { redactPayload } from "../src/redaction";
+import {
+  collectSensitiveValues,
+  hasRedactedPlaceholder,
+  redactErrorText,
+  redactPayload,
+} from "../src/redaction";
 import { resolveConfig } from "../src/config";
 
 describe("SDK Payload Redaction", () => {
@@ -106,5 +111,92 @@ describe("SDK Payload Redaction", () => {
     expect(redacted.pattern.source).toBe(pattern.source);
     expect(redacted.first).toEqual({ tag: "reusable" });
     expect(redacted.second).toEqual({ tag: "reusable" });
+  });
+
+  it("B11: redacts emails, phones, webhook/client secrets, tokens, auth headers, and preserves business IDs", () => {
+    const config = resolveConfig();
+    const payload = {
+      orderId: "ORD-B11-1",
+      userId: "USR-B11-1",
+      amount: 1499,
+      channel: "SMS",
+      email: "alice@example.com",
+      customerEmail: "bob@example.com",
+      emailAddress: "carol@example.com",
+      phone: "+15550001234",
+      secretKey: "sec_key_val",
+      clientSecret: "cli_sec_val",
+      webhookSecret: "whsec_val_1234567890",
+      bearerToken: "bearer_tok_123",
+      passwordHash: "pbkdf2_hash_value",
+      headers: {
+        Authorization: "Bearer super_secret_token",
+        "x-api-key": "top_secret_header_key",
+        "Content-Type": "application/json",
+      },
+    };
+
+    const redacted = redactPayload(payload, config.redactFields);
+
+    expect(redacted.orderId).toBe("ORD-B11-1");
+    expect(redacted.userId).toBe("USR-B11-1");
+    expect(redacted.amount).toBe(1499);
+    expect(redacted.channel).toBe("SMS");
+    expect(redacted.email).toBe("[REDACTED]");
+    expect(redacted.customerEmail).toBe("[REDACTED]");
+    expect(redacted.emailAddress).toBe("[REDACTED]");
+    expect(redacted.phone).toBe("[REDACTED]");
+    expect(redacted.secretKey).toBe("[REDACTED]");
+    expect(redacted.clientSecret).toBe("[REDACTED]");
+    expect(redacted.webhookSecret).toBe("[REDACTED]");
+    expect(redacted.bearerToken).toBe("[REDACTED]");
+    expect(redacted.passwordHash).toBe("[REDACTED]");
+    expect(redacted.headers.Authorization).toBe("[REDACTED]");
+    expect(redacted.headers["x-api-key"]).toBe("[REDACTED]");
+    expect(redacted.headers["Content-Type"]).toBe("application/json");
+    expect(hasRedactedPlaceholder(redacted)).toBe(true);
+    expect(hasRedactedPlaceholder({ orderId: "ORD-1", channel: "EMAIL" })).toBe(false);
+  });
+
+  it("B11: strips sensitive values, URIs, auth headers, vendor tokens, and emails from error messages & stack traces", () => {
+    const config = resolveConfig();
+    const payload = {
+      orderId: "ORD-B11-ERR",
+      customerEmail: "victim@corp.example",
+      secretApiKey: "custom-secret-value-98765",
+    };
+    const values = collectSensitiveValues(payload, config.redactFields);
+
+    const rawError =
+      "HTTP 401 failed for victim@corp.example and cc ops.alert@corp.example using Bearer eyJhbGciOiJIUzI1NiJ9.payload12345.sig67890 at https://api.example.com?apiKey=sk_live_abcdefgh12345678&val=custom-secret-value-98765 postgres://admin:dbPass123@db.internal:5432/prod";
+    const cleaned = redactErrorText(rawError, values);
+
+    expect(cleaned).not.toContain("victim@corp.example");
+    expect(cleaned).not.toContain("ops.alert@corp.example");
+    expect(cleaned).not.toContain("custom-secret-value-98765");
+    expect(cleaned).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(cleaned).not.toContain("sk_live_abcdefgh12345678");
+    expect(cleaned).not.toContain("dbPass123");
+    expect(cleaned).toContain("Bearer [REDACTED]");
+    expect(cleaned).toContain("postgres://admin:[REDACTED]@db.internal:5432/prod");
+    expect(cleaned).toContain("[REDACTED_EMAIL]");
+  });
+
+  it("B11/B04: redacting malicious __proto__ own-keys never pollutes Object.prototype", () => {
+    const poisoned = JSON.parse('{"__proto__":{"pollutedFromRedact":true},"secret":"abc"}');
+    const sanitized = redactPayload(poisoned, ["secret"]);
+
+    expect(sanitized.secret).toBe("[REDACTED]");
+    expect(({} as any).pollutedFromRedact).toBeUndefined();
+  });
+
+  it("B10: resolveConfig rejects invalid expectedJsonSchema definitions", () => {
+    expect(() =>
+      resolveConfig({
+        expectedJsonSchema: {
+          type: "not-a-valid-json-schema-type",
+        },
+      })
+    ).toThrow(/Invalid expectedJsonSchema/);
   });
 });

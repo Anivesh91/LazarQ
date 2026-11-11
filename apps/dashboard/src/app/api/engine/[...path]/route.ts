@@ -19,7 +19,18 @@ async function proxyEngineRequest(
     return response;
   }
 
-  const apiKey = process.env.ENGINE_API_KEY;
+  const apiKey = process.env.ENGINE_API_KEY?.trim();
+  if (
+    process.env.NODE_ENV === "production" &&
+    (!apiKey || apiKey === "dlq_dev_secret_key")
+  ) {
+    const response = NextResponse.json(
+      { message: "Engine proxy API credentials are not validly configured" },
+      { status: 503 }
+    );
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  }
 
   const { path } = await params;
   if (!isAllowedEngineRequest(path, request.method)) {

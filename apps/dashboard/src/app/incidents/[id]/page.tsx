@@ -73,7 +73,8 @@ export default function IncidentDetailPage({ params }: PageProps) {
         }
       },
       [incidentId, loadDetail]
-    )
+    ),
+    loadDetail
   );
 
   const handleApprove = async () => {

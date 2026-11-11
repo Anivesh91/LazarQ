@@ -1,11 +1,15 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { IncidentSnapshot, validateJsonSchemaDefinition } from "@dlq-healer/sdk";
 import { incidentService } from "../services/incident.service";
 import { ragService } from "../services/rag.service";
 import { triageService } from "../services/triage.service";
 import { validationService } from "../services/validation.service";
 import { replayService } from "../services/replay.service";
+import { intakeQueueService } from "../services/intake-queue.service";
+import { RESUMABLE_INTAKE_STATUSES } from "../services/incident-state";
 import { AppError } from "../middleware/error-handler";
+import { logger } from "../config/logger";
 import { prisma } from "../db/prisma";
 
 export const incidentRouter: Router = Router();
@@ -33,6 +37,14 @@ const QueryParamsSchema = z.object({
   queueName: z.string().optional(),
 });
 
+const ReplayEnvelopeSchema = z.object({
+  v: z.literal(1),
+  alg: z.literal("aes-256-gcm"),
+  iv: z.string().min(1),
+  tag: z.string().min(1),
+  ct: z.string().min(1),
+});
+
 const IngestSnapshotSchema = z.object({
   idempotencyKey: z.string().min(1),
   source: z.string().default("sdk-v1"),
@@ -40,12 +52,31 @@ const IngestSnapshotSchema = z.object({
   jobId: z.string().min(1),
   jobName: z.string().default("unknown"),
   payloadSnapshot: z.record(z.any()),
-  expectedJsonSchema: z.record(z.any()).optional(),
+  replayEnvelope: ReplayEnvelopeSchema.optional(),
+  expectedJsonSchema: z
+    .record(z.any())
+    .superRefine((schema, ctx) => {
+      const check = validateJsonSchemaDefinition(schema);
+      if (!check.valid) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Invalid expectedJsonSchema: ${check.error}`,
+        });
+      }
+    })
+    .optional(),
   errorMessage: z.string().min(1),
   stackTrace: z.string().optional(),
   attemptsMade: z.number().int().nonnegative(),
   configuredAttempts: z.number().int().positive(),
   occurredAt: z.string().optional(),
+  lineage: z
+    .object({
+      lineageRootId: z.string().min(1).optional(),
+      parentIncidentId: z.string().min(1),
+      replayDepth: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 const ApproveBodySchema = z.object({
@@ -76,11 +107,58 @@ incidentRouter.post(
       const validatedSnapshot = IngestSnapshotSchema.parse(req.body);
       const result = await incidentService.ingestSnapshot(validatedSnapshot as any);
 
+      let queued = false;
+      if (
+        !result.isDuplicate ||
+        RESUMABLE_INTAKE_STATUSES.has(result.incident.status)
+      ) {
+        const queuedSnapshot: IncidentSnapshot = {
+          idempotencyKey: validatedSnapshot.idempotencyKey,
+          source: result.incident.sourceId,
+          queueName: result.incident.queueName,
+          jobId: result.incident.jobId,
+          jobName: result.incident.jobName,
+          payloadSnapshot:
+            (result.incident.payloadSnapshot as Record<string, any>) || {},
+          ...(validatedSnapshot.replayEnvelope
+            ? { replayEnvelope: validatedSnapshot.replayEnvelope }
+            : {}),
+          ...(validatedSnapshot.expectedJsonSchema
+            ? { expectedJsonSchema: validatedSnapshot.expectedJsonSchema }
+            : {}),
+          errorMessage: result.incident.errorMessage,
+          ...(result.incident.stackTrace
+            ? { stackTrace: result.incident.stackTrace }
+            : {}),
+          attemptsMade: result.incident.attemptsMade,
+          configuredAttempts: result.incident.configuredAttempts,
+          occurredAt: result.incident.occurredAt.toISOString(),
+          ...(validatedSnapshot.lineage
+            ? { lineage: validatedSnapshot.lineage }
+            : {}),
+        };
+
+        try {
+          await intakeQueueService.enqueueSnapshot(queuedSnapshot);
+          queued = true;
+        } catch (enqueueErr: any) {
+          logger.warn(
+            {
+              incidentId: result.incident.id,
+              idempotencyKey: validatedSnapshot.idempotencyKey,
+              err: enqueueErr?.message,
+            },
+            "[API Ingest] Persisted incident, but BullMQ intake enqueue failed"
+          );
+        }
+      }
+
       res.status(202).json({
         received: true,
         incidentId: result.incident.id,
         isDuplicate: result.isDuplicate,
         status: result.incident.status,
+        queued,
       });
     } catch (err) {
       next(err);

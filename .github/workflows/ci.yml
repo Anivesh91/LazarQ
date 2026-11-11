@@ -78,26 +78,11 @@ jobs:
       - name: Lint all workspaces
         run: pnpm lint
 
-      - name: Run SDK tests
-        run: pnpm --filter @dlq-healer/sdk test
-
-      - name: Run Dashboard tests
-        run: pnpm --filter @dlq-healer/dashboard test
-
-      - name: Run Engine deterministic unit and integration suites
-        run: |
-          pnpm --filter @dlq-healer/engine exec vitest run \
-            tests/api.test.ts \
-            tests/circuit-breaker.test.ts \
-            tests/embedding.test.ts \
-            tests/events.test.ts \
-            tests/incident.test.ts \
-            tests/metrics.test.ts \
-            tests/phase1-regressions.test.ts \
-            tests/phase3-health.test.ts \
-            tests/recovery.test.ts \
-            tests/runbook.test.ts \
-            tests/validator.test.ts
+      - name: Run full workspace test suite in deterministic mock AI mode
+        env:
+          LLM_PROVIDER: mock
+          EMBEDDING_PROVIDER: mock
+        run: pnpm test
 
       - name: Seed runbooks and run live AI semantic suites
         if: >-

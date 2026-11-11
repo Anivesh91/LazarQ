@@ -37,9 +37,9 @@ export function checkInvariants(
   const immutableFields = Array.from(new Set([...GLOBAL_IMMUTABLE_FIELDS, ...queueImmutables]));
 
   for (const field of immutableFields) {
-    // Check if the immutable field was present in the original payload
-    if (field in original) {
-      if (!(field in proposed)) {
+    // Check if the immutable field was present in the original payload (own properties only)
+    if (Object.prototype.hasOwnProperty.call(original, field)) {
+      if (!Object.prototype.hasOwnProperty.call(proposed, field)) {
         violations.push(`Immutable field "${field}" was removed from the proposed payload`);
         continue;
       }

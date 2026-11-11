@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  isOperatorAuthEnabled,
+  getOperatorAuthState,
   OPERATOR_SESSION_COOKIE,
   verifyOperatorSessionToken,
 } from "./lib/operator-session-edge";
 
 export async function middleware(request: NextRequest) {
-  if (!isOperatorAuthEnabled()) {
+  const authState = getOperatorAuthState();
+  if (!authState.authRequired) {
     return NextResponse.next();
   }
 

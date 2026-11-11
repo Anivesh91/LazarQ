@@ -3,9 +3,15 @@ import {
   Incident,
   RecoveryAttempt,
   Runbook,
+  RunbooksPagination,
   SystemHealth,
 } from "./types";
 import { formatEngineErrorMessage } from "./api-errors";
+import {
+  buildRunbooksQueryString,
+  normalizeRunbooksResponse,
+  RunbooksQueryParams,
+} from "./runbook-query";
 
 const ENGINE_BASE_URL = "/api/engine";
 
@@ -162,13 +168,28 @@ export const api = {
   },
 
   /**
-   * List all knowledge base Runbooks
+   * List knowledge base Runbooks with server-side pagination, search, and tag filtering
    */
-  async getRunbooks(): Promise<Runbook[]> {
-    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>(
-      "/runbooks?limit=100"
-    );
-    return res.data || [];
+  async getRunbooks(
+    params: RunbooksQueryParams & { signal?: AbortSignal } = {}
+  ): Promise<{
+    runbooks: Runbook[];
+    pagination: RunbooksPagination;
+  }> {
+    const queryParams: RunbooksQueryParams = {
+      page: params.page ?? 1,
+      limit: params.limit ?? 20,
+      search: params.search,
+      tag: params.tag,
+    };
+    const query = buildRunbooksQueryString(queryParams);
+    const res = await fetchJSON<{
+      success: boolean;
+      data?: Runbook[];
+      pagination?: Partial<RunbooksPagination>;
+    }>(`/runbooks${query}`, { signal: params.signal });
+
+    return normalizeRunbooksResponse(res, queryParams);
   },
 
   /**

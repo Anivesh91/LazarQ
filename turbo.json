@@ -1,5 +1,30 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "ENGINE_PORT",
+    "ENGINE_API_KEY",
+    "TEST_AUTH_ENABLED",
+    "INTAKE_QUEUE_NAME",
+    "DLQ_PAYLOAD_ENCRYPTION_KEY",
+    "MAX_REPLAY_ATTEMPTS",
+    "LLM_PROVIDER",
+    "LLM_API_KEY",
+    "LLM_MODEL",
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_API_KEY",
+    "EMBEDDING_MODEL",
+    "ENGINE_URL",
+    "DASHBOARD_URL",
+    "NEXT_PUBLIC_ENGINE_URL",
+    "DASHBOARD_OPERATOR_PASSWORD",
+    "DASHBOARD_SESSION_SECRET",
+    "DASHBOARD_COOKIE_SECURE",
+    "RUN_MIGRATIONS",
+    "SEED_RUNBOOKS"
+  ],
   "tasks": {
     "dev": {
       "cache": false,
@@ -7,6 +32,7 @@
     },
     "build": {
       "dependsOn": ["^build"],
+      "env": ["NEXT_PUBLIC_ENGINE_URL"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "lint": {

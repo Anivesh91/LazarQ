@@ -1,6 +1,13 @@
+import { compileJsonSchema } from "@dlq-healer/sdk";
 import { checkInvariants } from "./invariants";
 import { checkAllowedMutations } from "./policies";
 import { RepairProposal } from "../services/llm.service";
+import { getMaxReplayAttempts } from "../config/env";
+import {
+  assertSafeJsonValue,
+  assertSafeMutationPath,
+  findUnsafeObjectKey,
+} from "./mutation-safety";
 
 export interface ValidationStageResult {
   stage: number;
@@ -32,9 +39,13 @@ export interface ValidationContext {
     configuredAttempts: number;
     payloadSnapshot: any;
     expectedJsonSchema?: any;
+    lineageReplayCount?: number;
+    replayDepth?: number;
+    maxReplayAttempts?: number;
   };
   proposal: RepairProposal;
   proposedPayload: Record<string, any> | null;
+  validationTargetPayload?: Record<string, any> | null;
 }
 
 export class DeterministicValidator {
@@ -44,14 +55,18 @@ export class DeterministicValidator {
    */
   validate(context: ValidationContext): ValidationGateResult {
     const stages: ValidationStageResult[] = [];
-    const { incident, proposal, proposedPayload } = context;
+    const { incident, proposal, proposedPayload, validationTargetPayload } = context;
     const original = (typeof incident.payloadSnapshot === "object" && incident.payloadSnapshot !== null)
       ? incident.payloadSnapshot
       : {};
     const proposed = proposedPayload || {};
+    const schemaTarget =
+      validationTargetPayload && typeof validationTargetPayload === "object"
+        ? validationTargetPayload
+        : proposed;
 
     // ── STAGE 1: Schema Validation ──
-    const stage1 = this.runStage1SchemaValidation(proposed, incident.expectedJsonSchema);
+    const stage1 = this.runStage1SchemaValidation(schemaTarget, incident.expectedJsonSchema);
     stages.push(stage1);
     if (!stage1.passed) {
       return this.buildResult(false, 1, stage1.message, stages, original, proposed, proposal.mutations);
@@ -90,26 +105,103 @@ export class DeterministicValidator {
   }
 
   // ── Stage 1 Implementation ──
+  public validateSchema(proposed: Record<string, any>, expectedSchema?: any): ValidationStageResult {
+    return this.runStage1SchemaValidation(proposed, expectedSchema);
+  }
+
   private runStage1SchemaValidation(proposed: Record<string, any>, expectedSchema?: any): ValidationStageResult {
-    if (!expectedSchema || typeof expectedSchema !== "object") {
+    if (!expectedSchema || typeof expectedSchema !== "object" || Array.isArray(expectedSchema)) {
       return { stage: 1, name: "Schema Validation", passed: true, message: "No schema constraint defined; passed." };
     }
 
-    // Check required fields defined in schema
-    if (Array.isArray(expectedSchema.required)) {
-      const missing = expectedSchema.required.filter((k: string) => !(k in proposed));
-      if (missing.length > 0) {
-        return {
-          stage: 1,
-          name: "Schema Validation",
-          passed: false,
-          message: `Proposed payload violates schema: missing required fields [${missing.join(", ")}]`,
-          details: { missingFields: missing },
-        };
-      }
+    let validateFn: ReturnType<typeof compileJsonSchema>;
+    try {
+      validateFn = compileJsonSchema(expectedSchema);
+    } catch (err: any) {
+      return {
+        stage: 1,
+        name: "Schema Validation",
+        passed: false,
+        message: `Invalid expectedJsonSchema definition: ${err?.message || "Compilation failed"}`,
+        details: { invalidSchema: true },
+      };
     }
 
-    return { stage: 1, name: "Schema Validation", passed: true, message: "Proposed payload adheres to expected schema." };
+    const valid = validateFn(proposed);
+    if (valid) {
+      return { stage: 1, name: "Schema Validation", passed: true, message: "Proposed payload adheres to expected schema." };
+    }
+
+    const errors = validateFn.errors || [];
+    const missingFields: string[] = [];
+    const otherMessages: string[] = [];
+    const sanitizedErrors: Array<{
+      path: string;
+      keyword: string;
+      message?: string;
+    }> = [];
+
+    for (const err of errors) {
+      const normalizedPath = err.instancePath
+        ? err.instancePath.replace(/^\//, "").replace(/\//g, ".")
+        : "";
+
+      if (err.keyword === "required" && typeof err.params?.missingProperty === "string") {
+        const missingField = err.params.missingProperty;
+        if (!normalizedPath) {
+          if (!missingFields.includes(missingField)) {
+            missingFields.push(missingField);
+          }
+          sanitizedErrors.push({
+            path: missingField,
+            keyword: err.keyword,
+            message: err.message,
+          });
+          continue;
+        }
+        otherMessages.push(`${normalizedPath}.${missingField} is required`);
+        sanitizedErrors.push({
+          path: `${normalizedPath}.${missingField}`,
+          keyword: err.keyword,
+          message: err.message,
+        });
+        continue;
+      }
+
+      const displayPath = normalizedPath || "payload";
+      if (err.keyword === "enum" && Array.isArray(err.params?.allowedValues)) {
+        otherMessages.push(
+          `${displayPath} must be one of [${err.params.allowedValues.join(", ")}]`
+        );
+      } else {
+        otherMessages.push(`${displayPath} ${err.message || "failed validation"}`);
+      }
+
+      sanitizedErrors.push({
+        path: displayPath,
+        keyword: err.keyword,
+        message: err.message,
+      });
+    }
+
+    const parts: string[] = [];
+    if (missingFields.length > 0) {
+      parts.push(`missing required fields [${missingFields.join(", ")}]`);
+    }
+    if (otherMessages.length > 0) {
+      parts.push(...otherMessages);
+    }
+
+    return {
+      stage: 1,
+      name: "Schema Validation",
+      passed: false,
+      message: `Proposed payload violates schema: ${parts.join("; ") || "validation failed"}`,
+      details: {
+        ...(missingFields.length > 0 ? { missingFields } : {}),
+        errors: sanitizedErrors,
+      },
+    };
   }
 
   // ── Stage 2 Implementation ──
@@ -129,6 +221,33 @@ export class DeterministicValidator {
 
   // ── Stage 3 Implementation ──
   private runStage3AllowedMutationsCheck(mutations: any[], queueName?: string): ValidationStageResult {
+    for (const mut of mutations || []) {
+      if (mut?.field) {
+        try {
+          assertSafeMutationPath(mut.field);
+        } catch (err: any) {
+          return {
+            stage: 3,
+            name: "Allowed Mutations",
+            passed: false,
+            message: err?.message || `Unsafe mutation field path rejected: "${mut.field}"`,
+            details: { unauthorizedFields: [mut.field] },
+          };
+        }
+      }
+      try {
+        assertSafeJsonValue(mut?.to, `mutation("${mut?.field || ""}")`);
+      } catch (err: any) {
+        return {
+          stage: 3,
+          name: "Allowed Mutations",
+          passed: false,
+          message: err?.message || `Unsafe mutation value rejected for "${mut?.field || ""}"`,
+          details: { unauthorizedFields: mut?.field ? [mut.field] : [] },
+        };
+      }
+    }
+
     const result = checkAllowedMutations(mutations || [], queueName);
     if (!result.passed) {
       return {
@@ -173,6 +292,29 @@ export class DeterministicValidator {
       };
     }
 
+    const maxReplayAttempts =
+      incident.maxReplayAttempts ?? getMaxReplayAttempts();
+    const lineageReplayCount = incident.lineageReplayCount ?? 0;
+    const replayDepth = incident.replayDepth ?? 0;
+
+    if (
+      lineageReplayCount >= maxReplayAttempts ||
+      replayDepth >= maxReplayAttempts
+    ) {
+      return {
+        stage: 4,
+        name: "Replay Guard",
+        passed: false,
+        message: `REPLAY_LIMIT_EXCEEDED: Lineage replay budget exhausted (${lineageReplayCount} replays, depth ${replayDepth}, ceiling ${maxReplayAttempts}).`,
+        details: {
+          code: "REPLAY_LIMIT_EXCEEDED",
+          lineageReplayCount,
+          replayDepth,
+          maxReplayAttempts,
+        },
+      };
+    }
+
     return { stage: 4, name: "Replay Guard", passed: true, message: "Incident state and replay budget verified." };
   }
 
@@ -206,6 +348,17 @@ export class DeterministicValidator {
         name: "Dry-Run Boundary",
         passed: false,
         message: `Proposed payload exceeds 1MB safety threshold (${serialized.length} bytes).`,
+      };
+    }
+
+    // Own-key prototype pollution inspection on object structure directly
+    const unsafeKeyPath = findUnsafeObjectKey(proposed);
+    if (unsafeKeyPath) {
+      return {
+        stage: 5,
+        name: "Dry-Run Boundary",
+        passed: false,
+        message: `Malicious injection pattern detected in proposed payload: unsafe key "${unsafeKeyPath}".`,
       };
     }
 

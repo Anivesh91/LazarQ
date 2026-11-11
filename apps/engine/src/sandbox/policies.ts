@@ -1,3 +1,5 @@
+import { DISALLOWED_MUTATION_SEGMENTS } from "./mutation-safety";
+
 export const GLOBAL_ALLOWED_MUTATIONS: readonly string[] = [
   "notificationChannel",
   "channel",
@@ -53,8 +55,18 @@ export function checkAllowedMutations(
   for (const mut of mutations) {
     if (!mut.field) continue;
 
+    const segments = mut.field.split(".");
+    if (
+      segments.some(
+        (seg) => !seg || seg.trim() !== seg || DISALLOWED_MUTATION_SEGMENTS.has(seg)
+      )
+    ) {
+      unauthorizedFields.push(mut.field);
+      continue;
+    }
+
     // Check root path for nested fields (e.g. "metadata.retry" -> "metadata")
-    const rootField = mut.field.split(".")[0];
+    const rootField = segments[0];
 
     if (!allowedFields.has(mut.field) && !allowedFields.has(rootField)) {
       unauthorizedFields.push(mut.field);

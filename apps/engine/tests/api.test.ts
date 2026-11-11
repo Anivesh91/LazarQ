@@ -2,12 +2,15 @@ import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import { prisma } from "../src/db/prisma";
+import { intakeQueueService } from "../src/services/intake-queue.service";
 
 describe("DLQ-Healer Engine REST API", () => {
   const uniqueKey = `api-test-queue:job_${Date.now()}`;
   let createdIncidentId: string;
 
   afterAll(async () => {
+    await intakeQueueService.removeSnapshotJob(uniqueKey).catch(() => undefined);
+    await intakeQueueService.closeAll();
     if (createdIncidentId) {
       await prisma.auditLog.deleteMany({
         where: { incidentId: createdIncidentId },

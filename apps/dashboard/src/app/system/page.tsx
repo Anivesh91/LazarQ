@@ -163,7 +163,9 @@ export default function SystemPage() {
                 <span>{health?.database === "connected" ? "Operational" : "Disconnected"}</span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
-                Port 5432 • {health?.embeddingModel || "768-dim vector embeddings"}
+                Port 5432 • {health?.embeddingProvider || "gemini"} (
+                {health?.embeddingMode || "live"}) •{" "}
+                {health?.embeddingModel || "768-dim vector embeddings"}
               </p>
             </div>
 
@@ -181,8 +183,8 @@ export default function SystemPage() {
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-mono">
-                {health?.llmProvider ? `${health.llmProvider} • ` : ""}
-                Structured JSON mode • Bounded backoff
+                {health?.llmProvider ? `${health.llmProvider}` : "unknown"} (
+                {health?.llmMode || "live"}) • Structured JSON mode • Bounded backoff
               </p>
             </div>
           </div>

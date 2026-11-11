@@ -1,13 +1,35 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app } from "../src/app";
 import { prisma } from "../src/db/prisma";
 import { triageService } from "../src/services/triage.service";
 import { incidentService } from "../src/services/incident.service";
 import { llmService } from "../src/services/llm.service";
+import { runbookService } from "../src/services/runbook.service";
+import { embeddingService } from "../src/services/embedding.service";
+import { SEED_RUNBOOKS } from "../src/db/seed-runbooks";
 
 describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
   const createdIncidentIds: string[] = [];
+  const createdRunbookIds: string[] = [];
+
+  beforeAll(async () => {
+    const { provider, model } = embeddingService.getProvenance();
+    for (const item of SEED_RUNBOOKS) {
+      const existing = await prisma.runbook.findFirst({
+        where: {
+          title: item.title,
+          embeddingProvider: provider,
+          embeddingModel: model,
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        const created = await runbookService.createRunbook(item);
+        createdRunbookIds.push(created.id);
+      }
+    }
+  });
 
   afterAll(async () => {
     if (createdIncidentIds.length > 0) {
@@ -16,6 +38,11 @@ describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
       });
       await prisma.incident.deleteMany({
         where: { id: { in: createdIncidentIds } },
+      });
+    }
+    if (createdRunbookIds.length > 0) {
+      await prisma.runbook.deleteMany({
+        where: { id: { in: createdRunbookIds } },
       });
     }
     await prisma.$disconnect();
@@ -143,9 +170,9 @@ describe("Day 8: The AI Doctor - Structured LLM Repair Planner", () => {
       source: "triage-test",
       queueName: "order-queue",
       jobId: `job-fail-${Date.now()}`,
-      jobName: "failing-order",
-      payloadSnapshot: { id: "1" },
-      errorMessage: "Some transient error",
+      jobName: "send-order-sms",
+      payloadSnapshot: { orderId: "ORD-FAIL-1", channel: "SMS" },
+      errorMessage: "Twilio Error 20429: Rate limit exceeded",
       attemptsMade: 3,
       configuredAttempts: 3,
     });
