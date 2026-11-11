@@ -138,7 +138,7 @@ async function runDemoSteps() {
 
   let incident: any = null;
   const startTime = Date.now();
-  while (Date.now() - startTime < 15000) {
+  while (Date.now() - startTime < 60000) {
     incident = await prisma.incident.findFirst({
       where: {
         payloadSnapshot: {
@@ -152,17 +152,27 @@ async function runDemoSteps() {
       },
     });
 
-    if (incident && (incident.status === "AWAITING_APPROVAL" || incident.status === "PROPOSAL_READY")) {
+    if (
+      incident &&
+      [
+        "AWAITING_APPROVAL",
+        "SANDBOX_FAILED",
+        "QUARANTINED",
+        "ANALYSIS_FAILED",
+      ].includes(incident.status)
+    ) {
       break;
     }
     await sleep(800);
   }
 
-  if (
-    !incident ||
-    !["AWAITING_APPROVAL", "PROPOSAL_READY"].includes(incident.status)
-  ) {
+  if (!incident) {
     throw new Error("Timed out waiting for incident diagnosis.");
+  }
+  if (incident.status !== "AWAITING_APPROVAL") {
+    throw new Error(
+      `Incident diagnosis did not reach AWAITING_APPROVAL (got ${incident.status}).`
+    );
   }
 
   console.log(`  ✓ Incident persisted in PostgreSQL (ID: ${incident.id})`);
@@ -238,7 +248,7 @@ async function runDemoSteps() {
   // Wait for worker to execute replayed job and observer to catch resolution
   let resolvedIncident: any = null;
   const resolveStart = Date.now();
-  while (Date.now() - resolveStart < 8000) {
+  while (Date.now() - resolveStart < 15000) {
     resolvedIncident = await prisma.incident.findUnique({
       where: { id: incident.id },
       include: { auditLogs: { orderBy: { createdAt: "asc" } }, recoveryAttempts: true },
