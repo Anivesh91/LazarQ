@@ -49,7 +49,7 @@ attachDLQHealer(orderWorker, {
   redisConnection,
   intakeQueueName: "dlq-healer-intake",
   sourceId: "playground-app",
-  redactFields: ["customerEmail", "ssn", "secret"],
+  redactFields: ["customerEmail", "ssn", "secret", "secretApiKey"],
   enableLogging: true,
 });
 

@@ -137,7 +137,10 @@ export class IncidentService {
 
     const where: any = {};
     if (params.status) where.status = params.status;
-    if (params.queueName) where.queueName = params.queueName;
+    const trimmedQueue = params.queueName?.trim();
+    if (trimmedQueue) {
+      where.queueName = { contains: trimmedQueue, mode: "insensitive" };
+    }
 
     const [items, total] = await Promise.all([
       prisma.incident.findMany({

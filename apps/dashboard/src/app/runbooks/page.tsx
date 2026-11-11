@@ -13,8 +13,10 @@ import { Sidebar } from "../../components/Sidebar";
 import { Header } from "../../components/Header";
 import { api } from "../../lib/api";
 import { Runbook } from "../../lib/types";
+import { useSystemHealth } from "../../lib/use-health";
 
 export default function RunbooksPage() {
+  const { health } = useSystemHealth();
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedRunbook, setSelectedRunbook] = useState<Runbook | null>(null);
@@ -279,7 +281,7 @@ export default function RunbooksPage() {
                       <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-400 font-mono">
                         <span>ID: {selectedRunbook.id}</span>
                         <span>•</span>
-                        <span>Embed: gemini-embedding-001 (768d)</span>
+                        <span>Embed: {health?.embeddingModel || "gemini-embedding-001"} (768d)</span>
                         <span>•</span>
                         <span>
                           Updated:{" "}

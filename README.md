@@ -114,11 +114,12 @@ lazarQ/
 │   │   │   ├── services/          # Triage, RAG (pgvector), Gemini LLM, Metrics, Replay
 │   │   │   │   └── replay.service.ts # Dynamic Queue Re-injector
 │   │   │   └── workers/           # Healer Intake Worker & Replay Result Observer
-│   │   └── tests/                 # 73 Unit, Integration, & E2E Scenarios (Vitest)
+│   │   └── tests/                 # 87 Unit, Integration, & E2E Scenarios (Vitest)
 │   │
 │   ├── dashboard/                 # Next.js 15 App Router + Tailwind CSS Cockpit
 │   │   ├── src/app/               # Overview Cockpit, Incidents, Runbooks, System
-│   │   └── src/lib/               # SSE Hook, REST API Client, Types
+│   │   ├── src/lib/               # SSE Hook, REST API Client, Auth, Types
+│   │   └── tests/                 # 11 Helper & Auth Unit Tests (node:test)
 │   │
 │   └── playground/                # Simulated Production Environment
 │       └── src/
@@ -149,8 +150,8 @@ lazarQ/
 ## 🚀 Quickstart Guide
 
 ### 1. Prerequisites
-- **Node.js**: `v20.x` or `v22.x`
-- **pnpm**: `v9.x` or `v10.x`
+- **Node.js**: `v20.x` or `v24.x` (CI runs Node.js 24 LTS)
+- **pnpm**: `v12.15.0` (managed via `packageManager` in root `package.json`)
 - **Docker & Docker Compose**: For PostgreSQL (with `pgvector`) and Redis.
 - **Gemini API Key**: Free key from [Google AI Studio](https://aistudio.google.com/).
 
@@ -291,23 +292,27 @@ pnpm test
 ```
 
 ```text
-packages/sdk/tests/redaction.test.ts      (4 tests)
-packages/sdk/tests/attach.test.ts          (2 tests)
-apps/engine/tests/api.test.ts              (9 tests)
-apps/engine/tests/circuit-breaker.test.ts  (9 tests)
-apps/engine/tests/embedding.test.ts        (3 tests)
-apps/engine/tests/events.test.ts           (3 tests)
-apps/engine/tests/incident.test.ts         (4 tests)
-apps/engine/tests/metrics.test.ts          (2 tests)
-apps/engine/tests/rag.test.ts              (5 tests)
-apps/engine/tests/recovery.test.ts         (15 tests)
-apps/engine/tests/runbook.test.ts          (8 tests)
-apps/engine/tests/triage.test.ts           (5 tests)
-apps/engine/tests/validator.test.ts        (7 tests)
-apps/engine/tests/e2e.test.ts              (3 tests)
+packages/sdk/tests/redaction.test.ts            (6 tests)
+packages/sdk/tests/attach.test.ts               (5 tests)
+apps/dashboard/tests/phase2-helpers.test.ts     (8 tests)
+apps/dashboard/tests/phase3-auth.test.ts        (3 tests)
+apps/engine/tests/api.test.ts                   (9 tests)
+apps/engine/tests/circuit-breaker.test.ts       (9 tests)
+apps/engine/tests/embedding.test.ts             (3 tests)
+apps/engine/tests/events.test.ts                (3 tests)
+apps/engine/tests/incident.test.ts              (4 tests)
+apps/engine/tests/metrics.test.ts               (2 tests)
+apps/engine/tests/phase1-regressions.test.ts    (13 tests)
+apps/engine/tests/phase3-health.test.ts         (1 test)
+apps/engine/tests/rag.test.ts                   (5 tests)
+apps/engine/tests/recovery.test.ts              (15 tests)
+apps/engine/tests/runbook.test.ts               (8 tests)
+apps/engine/tests/triage.test.ts                (5 tests)
+apps/engine/tests/validator.test.ts             (7 tests)
+apps/engine/tests/e2e.test.ts                   (3 tests)
 
-Test Suites: 14 total (12 Engine, 2 SDK)
-Total Tests: 79 total (73 Engine, 6 SDK)
+Test Suites: 18 total (14 Engine, 2 SDK, 2 Dashboard)
+Total Tests: 109 total (87 Engine, 11 SDK, 11 Dashboard)
 ```
 
 ---

@@ -1,5 +1,10 @@
+import { createHash, timingSafeEqual } from "crypto";
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "./error-handler";
+
+function hashSecret(secret: string): Buffer {
+  return createHash("sha256").update(secret, "utf8").digest();
+}
 
 /**
  * Validates incoming API requests against configured ENGINE_API_KEY if present in environment.
@@ -23,11 +28,17 @@ export function apiKeyAuth(req: Request, _res: Response, next: NextFunction) {
     return next();
   }
 
-  const providedKey =
-    req.headers["x-api-key"] ||
-    req.headers["authorization"]?.replace(/^Bearer\s+/i, "");
+  const rawApiKey = req.headers["x-api-key"];
+  const rawAuthHeader = req.headers["authorization"];
+  const xApiKey = Array.isArray(rawApiKey) ? rawApiKey[0] : rawApiKey;
+  const authHeader = Array.isArray(rawAuthHeader) ? rawAuthHeader[0] : rawAuthHeader;
+  const bearerKey = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const providedKey = xApiKey ?? bearerKey;
 
-  if (!providedKey || providedKey !== configuredKey) {
+  if (
+    !providedKey ||
+    !timingSafeEqual(hashSecret(providedKey), hashSecret(configuredKey))
+  ) {
     throw new AppError(
       "Unauthorized: Invalid or missing API key in x-api-key or Authorization header",
       401,

@@ -107,94 +107,125 @@ export class RAGService {
       }),
     ]);
 
-    const matches = await this.findMatchingRunbooks({
-      errorMessage: incident.errorMessage,
-      stackTrace: incident.stackTrace,
-      jobName: incident.jobName,
-    });
+    try {
+      const matches = await this.findMatchingRunbooks({
+        errorMessage: incident.errorMessage,
+        stackTrace: incident.stackTrace,
+        jobName: incident.jobName,
+      });
 
-    const bestMatch = matches[0] || null;
+      const bestMatch = matches[0] || null;
 
-    if (bestMatch && bestMatch.similarity >= this.similarityThreshold) {
-      logger.info(
-        {
-          incidentId,
-          runbookId: bestMatch.id,
-          runbookTitle: bestMatch.title,
+      if (bestMatch && bestMatch.similarity >= this.similarityThreshold) {
+        logger.info(
+          {
+            incidentId,
+            runbookId: bestMatch.id,
+            runbookTitle: bestMatch.title,
+            similarity: bestMatch.similarity,
+          },
+          "Found matching Runbook with sufficient confidence"
+        );
+
+        // Transition to RAG_MATCHED
+        await prisma.$transaction([
+          prisma.incident.update({
+            where: { id: incidentId },
+            data: {
+              status: "RAG_MATCHED",
+              matchedRunbookId: bestMatch.id,
+            },
+          }),
+          prisma.auditLog.create({
+            data: {
+              incidentId,
+              action: "RAG_MATCHED",
+              actor: "system",
+              details: {
+                runbookId: bestMatch.id,
+                runbookTitle: bestMatch.title,
+                similarity: bestMatch.similarity,
+                threshold: this.similarityThreshold,
+              },
+            },
+          }),
+        ]);
+
+        return {
+          status: "RAG_MATCHED",
+          matched: true,
+          runbook: bestMatch,
           similarity: bestMatch.similarity,
-        },
-        "Found matching Runbook with sufficient confidence"
+          allMatches: matches,
+        };
+      } else {
+        logger.warn(
+          {
+            incidentId,
+            highestSimilarity: bestMatch?.similarity || 0,
+            threshold: this.similarityThreshold,
+          },
+          "No matching Runbook found above threshold; quarantining incident"
+        );
+
+        // Transition to QUARANTINED (Safe fallback)
+        await prisma.$transaction([
+          prisma.incident.update({
+            where: { id: incidentId },
+            data: { status: "QUARANTINED" },
+          }),
+          prisma.auditLog.create({
+            data: {
+              incidentId,
+              action: "QUARANTINED",
+              actor: "system",
+              details: {
+                reason: "No runbook matched above confidence threshold",
+                highestSimilarity: bestMatch?.similarity || 0,
+                threshold: this.similarityThreshold,
+                bestCandidate: bestMatch ? { id: bestMatch.id, title: bestMatch.title } : null,
+              },
+            },
+          }),
+        ]);
+
+        return {
+          status: "QUARANTINED",
+          matched: false,
+          runbook: null,
+          similarity: bestMatch?.similarity || 0,
+          allMatches: matches,
+        };
+      }
+    } catch (err: any) {
+      logger.error(
+        { incidentId, err: err?.message },
+        "RAG matching failed after transitioning to ANALYZING; marking incident ANALYSIS_FAILED"
       );
 
-      // Transition to RAG_MATCHED
-      await prisma.$transaction([
-        prisma.incident.update({
-          where: { id: incidentId },
-          data: {
-            status: "RAG_MATCHED",
-            matchedRunbookId: bestMatch.id,
-          },
-        }),
-        prisma.auditLog.create({
-          data: {
-            incidentId,
-            action: "RAG_MATCHED",
-            actor: "system",
-            details: {
-              runbookId: bestMatch.id,
-              runbookTitle: bestMatch.title,
-              similarity: bestMatch.similarity,
-              threshold: this.similarityThreshold,
+      try {
+        await prisma.$transaction([
+          prisma.incident.update({
+            where: { id: incidentId },
+            data: { status: "ANALYSIS_FAILED" },
+          }),
+          prisma.auditLog.create({
+            data: {
+              incidentId,
+              action: "ANALYSIS_FAILED",
+              actor: "system/rag",
+              details: { error: err?.message || "RAG matching failed" },
             },
-          },
-        }),
-      ]);
+          }),
+        ]);
+      } catch (persistErr: any) {
+        logger.error(
+          { incidentId, err: persistErr?.message },
+          "Failed to persist ANALYSIS_FAILED fallback after RAG error"
+        );
+      }
 
-      return {
-        status: "RAG_MATCHED",
-        matched: true,
-        runbook: bestMatch,
-        similarity: bestMatch.similarity,
-        allMatches: matches,
-      };
-    } else {
-      logger.warn(
-        {
-          incidentId,
-          highestSimilarity: bestMatch?.similarity || 0,
-          threshold: this.similarityThreshold,
-        },
-        "No matching Runbook found above threshold; quarantining incident"
-      );
-
-      // Transition to QUARANTINED (Safe fallback)
-      await prisma.$transaction([
-        prisma.incident.update({
-          where: { id: incidentId },
-          data: { status: "QUARANTINED" },
-        }),
-        prisma.auditLog.create({
-          data: {
-            incidentId,
-            action: "QUARANTINED",
-            actor: "system",
-            details: {
-              reason: "No runbook matched above confidence threshold",
-              highestSimilarity: bestMatch?.similarity || 0,
-              threshold: this.similarityThreshold,
-              bestCandidate: bestMatch ? { id: bestMatch.id, title: bestMatch.title } : null,
-            },
-          },
-        }),
-      ]);
-
-      return {
-        status: "QUARANTINED",
-        matched: false,
-        runbook: null,
-        similarity: bestMatch?.similarity || 0,
-        allMatches: matches,
-      };
+      throw err;
     }
   }
 }

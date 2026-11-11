@@ -5,6 +5,7 @@ import {
   Runbook,
   SystemHealth,
 } from "./types";
+import { formatEngineErrorMessage } from "./api-errors";
 
 const ENGINE_BASE_URL = "/api/engine";
 
@@ -30,10 +31,10 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
 
     let errorMsg = `HTTP Error ${res.status}: ${res.statusText}`;
     try {
-      const errorBody = await res.json();
-      errorMsg = errorBody.message || errorMsg;
+      const errorBody = (await res.json()) as unknown;
+      errorMsg = formatEngineErrorMessage(res.status, res.statusText, errorBody);
     } catch {
-      // ignore
+      // ignore non-JSON error responses
     }
     throw new Error(errorMsg);
   }
@@ -164,7 +165,9 @@ export const api = {
    * List all knowledge base Runbooks
    */
   async getRunbooks(): Promise<Runbook[]> {
-    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>("/runbooks");
+    const res = await fetchJSON<{ success: boolean; data: Runbook[] }>(
+      "/runbooks?limit=100"
+    );
     return res.data || [];
   },
 

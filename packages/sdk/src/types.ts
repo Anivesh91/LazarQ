@@ -52,4 +52,11 @@ export interface DLQHealerConfig {
    * Default: true
    */
   enableLogging?: boolean;
+
+  /**
+   * Whether to capture terminal failures of Engine-reinjected recovery jobs ("recovery-...").
+   * Disabled by default to prevent duplicate incident creation on failed replays.
+   * Default: false
+   */
+  captureReplayFailures?: boolean;
 }

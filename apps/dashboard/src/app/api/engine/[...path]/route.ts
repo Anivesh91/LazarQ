@@ -76,7 +76,15 @@ async function proxyEngineRequest(
     const value = upstream.headers.get(header);
     if (value) responseHeaders.set(header, value);
   }
-  responseHeaders.set("Cache-Control", "no-store");
+  const upstreamContentType = upstream.headers.get("content-type") || "";
+  if (upstreamContentType.includes("text/event-stream")) {
+    responseHeaders.set(
+      "Cache-Control",
+      upstream.headers.get("cache-control") || "no-cache, no-transform"
+    );
+  } else {
+    responseHeaders.set("Cache-Control", "no-store");
+  }
 
   return new Response(upstream.body, {
     status: upstream.status,

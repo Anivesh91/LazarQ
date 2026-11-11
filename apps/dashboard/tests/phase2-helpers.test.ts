@@ -5,6 +5,7 @@ import {
   collectJsonFieldDiffs,
   computeJsonLineDiff,
 } from "../src/lib/payload-diff.ts";
+import { formatEngineErrorMessage } from "../src/lib/api-errors.ts";
 
 describe("Phase 2 Dashboard Helpers", () => {
   describe("isAllowedEngineRequest", () => {
@@ -85,6 +86,36 @@ describe("Phase 2 Dashboard Helpers", () => {
       );
       assert.equal(proposedLines.length, 0);
       assert.ok(originalLines.every((line) => line.kind === "unchanged"));
+    });
+  });
+
+  describe("formatEngineErrorMessage", () => {
+    it("extracts Engine error string and formats Zod details", () => {
+      const formatted = formatEngineErrorMessage(400, "Bad Request", {
+        error: "Validation failed",
+        code: "VALIDATION_ERROR",
+        details: [
+          { path: "title", message: "Title is required" },
+          { path: "content", message: "Content is required" },
+        ],
+      });
+      assert.equal(
+        formatted,
+        "Validation failed (title: Title is required; content: Content is required)"
+      );
+    });
+
+    it("prefers proxy message when error field is absent and falls back safely", () => {
+      assert.equal(
+        formatEngineErrorMessage(401, "Unauthorized", {
+          message: "An authorized operator session is required",
+        }),
+        "An authorized operator session is required"
+      );
+      assert.equal(
+        formatEngineErrorMessage(502, "Bad Gateway", null),
+        "HTTP Error 502: Bad Gateway"
+      );
     });
   });
 });

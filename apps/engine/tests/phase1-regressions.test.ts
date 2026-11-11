@@ -1,4 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const { mockPrisma } = vi.hoisted(() => {
+  const client: any = {
+    incident: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+    },
+    recoveryAttempt: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
+    },
+    auditLog: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(async (ops: any) =>
+      typeof ops === "function" ? ops(client) : Promise.all(ops)
+    ),
+  };
+  return { mockPrisma: client };
+});
 
 vi.mock("../src/config/redis", () => ({
   redis: {
@@ -10,15 +31,43 @@ vi.mock("../src/config/redis", () => ({
 }));
 
 vi.mock("../src/db/prisma", () => ({
-  prisma: {},
+  prisma: mockPrisma,
 }));
 
 import { LLMService } from "../src/services/llm.service";
 import { ReplayResultObserver } from "../src/workers/replay-result.worker";
+import { applyMutation, triageService } from "../src/services/triage.service";
+import { ragService } from "../src/services/rag.service";
+import { circuitBreakerService } from "../src/services/circuit-breaker.service";
+import { incidentService } from "../src/services/incident.service";
+import { validationService } from "../src/services/validation.service";
+import { handleHealerJob } from "../src/workers/healer.worker";
+import { apiKeyAuth } from "../src/middleware/auth.middleware";
 
 describe("Phase 1 Regressions", () => {
+  const originalTestAuth = process.env.TEST_AUTH_ENABLED;
+  const originalApiKey = process.env.ENGINE_API_KEY;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    circuitBreakerService.reset();
+    mockPrisma.$transaction.mockImplementation(async (ops: any) =>
+      typeof ops === "function" ? ops(mockPrisma) : Promise.all(ops)
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalTestAuth === undefined) {
+      delete process.env.TEST_AUTH_ENABLED;
+    } else {
+      process.env.TEST_AUTH_ENABLED = originalTestAuth;
+    }
+    if (originalApiKey === undefined) {
+      delete process.env.ENGINE_API_KEY;
+    } else {
+      process.env.ENGINE_API_KEY = originalApiKey;
+    }
   });
 
   describe("LLMService channel fallback field detection", () => {
@@ -124,6 +173,323 @@ describe("Phase 1 Regressions", () => {
       expect(isTerminal).toBe(true);
 
       await observer.closeAll();
+    });
+
+    it("re-attaches observers on startup and reconciles jobs completed during downtime", async () => {
+      const observer = new ReplayResultObserver();
+      const ensureSpy = vi
+        .spyOn(observer, "ensureQueueObserver")
+        .mockImplementation(() => ({ close: vi.fn() } as any));
+
+      const fp = "fp-startup-reconcile";
+      (circuitBreakerService as any).breakers.set(fp, {
+        state: "HALF_OPEN",
+        failureTimestamps: [Date.now()],
+        trippedAt: Date.now() - 40_000,
+        trialInFlight: true,
+      });
+
+      mockPrisma.incident.findMany.mockResolvedValue([
+        {
+          id: "inc-replay-1",
+          queueName: "order-queue",
+          status: "REPLAYING",
+          fingerprint: fp,
+          recoveryAttempts: [
+            {
+              id: "attempt-1",
+              replayJobId: "recovery-attempt-1-1700000000000",
+              status: "IN_PROGRESS",
+            },
+          ],
+        },
+      ]);
+
+      mockPrisma.recoveryAttempt.findFirst.mockResolvedValue({
+        id: "attempt-1",
+        incidentId: "inc-replay-1",
+        replayJobId: "recovery-attempt-1-1700000000000",
+        status: "IN_PROGRESS",
+        incident: { id: "inc-replay-1", fingerprint: fp },
+      });
+      mockPrisma.recoveryAttempt.update.mockResolvedValue({ id: "attempt-1", status: "COMPLETED" });
+      mockPrisma.incident.update.mockResolvedValue({ id: "inc-replay-1", status: "RESOLVED" });
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+
+      const mockQueue = {
+        getJob: vi.fn().mockResolvedValue({
+          attemptsMade: 1,
+          opts: { attempts: 3 },
+          returnvalue: { ok: true },
+          getState: vi.fn().mockResolvedValue("completed"),
+        }),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      (observer as any).inspectionQueues.set("order-queue", mockQueue);
+
+      const count = await observer.recoverActiveReplayObservers();
+
+      expect(count).toBe(1);
+      expect(ensureSpy).toHaveBeenCalledWith("order-queue");
+      expect(mockPrisma.incident.update).toHaveBeenCalledWith({
+        where: { id: "inc-replay-1" },
+        data: { status: "RESOLVED" },
+      });
+      expect(circuitBreakerService.canProcess(fp).state).toBe("CLOSED");
+
+      await observer.closeAll();
+    });
+  });
+
+  describe("Mutation Safety & Prototype Pollution Guard", () => {
+    it("rejects __proto__, constructor, and prototype mutation paths", () => {
+      const payload: Record<string, any> = { orderId: "ORD-1", channel: "SMS" };
+
+      expect(() =>
+        applyMutation(payload, "__proto__.polluted", true)
+      ).toThrowError(/Unsafe mutation field path rejected/);
+      expect(() =>
+        applyMutation(payload, "constructor.prototype.polluted", true)
+      ).toThrowError(/Unsafe mutation field path rejected/);
+      expect(() =>
+        applyMutation(payload, "nested..bad", true)
+      ).toThrowError(/Unsafe mutation field path rejected/);
+
+      expect(({} as any).polluted).toBeUndefined();
+
+      applyMutation(payload, "meta.channel", "EMAIL");
+      expect(payload.meta.channel).toBe("EMAIL");
+    });
+  });
+
+  describe("RAG & Triage ANALYSIS_FAILED Transitions", () => {
+    it("transitions incident to ANALYSIS_FAILED if RAG embedding lookup throws", async () => {
+      mockPrisma.incident.findUnique.mockResolvedValue({
+        id: "inc-rag-fail",
+        status: "INGESTED",
+        errorMessage: "Twilio Error 20429",
+        stackTrace: null,
+        jobName: "process-order",
+        matchedRunbookId: null,
+      });
+      mockPrisma.incident.update.mockResolvedValue({ id: "inc-rag-fail" });
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "log-1" });
+
+      vi.spyOn(ragService, "findMatchingRunbooks").mockRejectedValue(
+        new Error("Gemini embedding API 503 unavailable")
+      );
+
+      await expect(ragService.matchIncident("inc-rag-fail")).rejects.toThrowError(
+        /Gemini embedding API 503 unavailable/
+      );
+
+      expect(mockPrisma.incident.update).toHaveBeenLastCalledWith({
+        where: { id: "inc-rag-fail" },
+        data: { status: "ANALYSIS_FAILED" },
+      });
+    });
+
+    it("returns ANALYSIS_FAILED cleanly from diagnoseIncident without duplicating RAG audit logs", async () => {
+      mockPrisma.incident.findUnique
+        .mockResolvedValueOnce({
+          id: "inc-triage-rag-fail",
+          status: "INGESTED",
+          matchedRunbookId: null,
+          matchedRunbook: null,
+        })
+        .mockResolvedValueOnce({
+          status: "ANALYSIS_FAILED",
+        });
+
+      vi.spyOn(ragService, "matchIncident").mockRejectedValue(
+        new Error("Vector query timeout")
+      );
+
+      const result = await triageService.diagnoseIncident("inc-triage-rag-fail");
+
+      expect(result.status).toBe("ANALYSIS_FAILED");
+      expect(result.proposal).toBeNull();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Circuit Breaker HALF_OPEN Recovery in Healer Worker", () => {
+    const sampleSnapshot = {
+      idempotencyKey: "order-queue:job-cb:3",
+      source: "test-sdk",
+      queueName: "order-queue",
+      jobId: "job-cb",
+      jobName: "process-order",
+      payloadSnapshot: { orderId: "ORD-CB" },
+      errorMessage: "Twilio Error 20429: Rate limit exceeded",
+      attemptsMade: 3,
+      configuredAttempts: 3,
+      occurredAt: new Date().toISOString(),
+    };
+
+    it("resets HALF_OPEN breaker to CLOSED when trial triage and validation succeed", async () => {
+      const fp = circuitBreakerService.getFingerprint(
+        sampleSnapshot.queueName,
+        sampleSnapshot.errorMessage
+      );
+      (circuitBreakerService as any).breakers.set(fp, {
+        state: "OPEN",
+        failureTimestamps: [Date.now() - 40_000],
+        trippedAt: Date.now() - 40_000,
+        trialInFlight: false,
+      });
+
+      vi.spyOn(incidentService, "ingestSnapshot").mockResolvedValue({
+        isDuplicate: false,
+        incident: { id: "inc-cb-pass", status: "INGESTED" } as any,
+      });
+      mockPrisma.incident.update.mockResolvedValue({ id: "inc-cb-pass" });
+      vi.spyOn(triageService, "diagnoseIncident").mockResolvedValue({
+        incidentId: "inc-cb-pass",
+        status: "PROPOSAL_READY",
+        proposal: {} as any,
+        proposedPayload: { orderId: "ORD-CB" },
+      });
+      vi.spyOn(validationService, "validateProposal").mockResolvedValue({
+        incidentId: "inc-cb-pass",
+        status: "AWAITING_APPROVAL",
+        validation: {} as any,
+      });
+
+      const outcome = await handleHealerJob({ id: "intake-1", data: sampleSnapshot });
+
+      expect(outcome.status).toBe("AWAITING_APPROVAL");
+      expect(circuitBreakerService.canProcess(fp)).toEqual({
+        allowed: true,
+        state: "CLOSED",
+      });
+    });
+
+    it("re-trips HALF_OPEN breaker back to OPEN when trial triage returns ANALYSIS_FAILED", async () => {
+      const fp = circuitBreakerService.getFingerprint(
+        sampleSnapshot.queueName,
+        sampleSnapshot.errorMessage
+      );
+      (circuitBreakerService as any).breakers.set(fp, {
+        state: "OPEN",
+        failureTimestamps: [Date.now() - 40_000],
+        trippedAt: Date.now() - 40_000,
+        trialInFlight: false,
+      });
+
+      vi.spyOn(incidentService, "ingestSnapshot").mockResolvedValue({
+        isDuplicate: false,
+        incident: { id: "inc-cb-fail", status: "INGESTED" } as any,
+      });
+      mockPrisma.incident.update.mockResolvedValue({ id: "inc-cb-fail" });
+      vi.spyOn(triageService, "diagnoseIncident").mockResolvedValue({
+        incidentId: "inc-cb-fail",
+        status: "ANALYSIS_FAILED",
+        proposal: null,
+        proposedPayload: null,
+      });
+
+      const outcome = await handleHealerJob({ id: "intake-2", data: sampleSnapshot });
+
+      expect(outcome.status).toBe("ANALYSIS_FAILED");
+      expect(circuitBreakerService.canProcess(fp).state).toBe("OPEN");
+    });
+
+    it("marks incident ANALYSIS_FAILED and re-trips HALF_OPEN if validation throws unexpectedly", async () => {
+      const fp = circuitBreakerService.getFingerprint(
+        sampleSnapshot.queueName,
+        sampleSnapshot.errorMessage
+      );
+      (circuitBreakerService as any).breakers.set(fp, {
+        state: "OPEN",
+        failureTimestamps: [Date.now() - 40_000],
+        trippedAt: Date.now() - 40_000,
+        trialInFlight: false,
+      });
+
+      vi.spyOn(incidentService, "ingestSnapshot").mockResolvedValue({
+        isDuplicate: false,
+        incident: { id: "inc-cb-throw", status: "INGESTED" } as any,
+      });
+      mockPrisma.incident.update.mockResolvedValue({ id: "inc-cb-throw" });
+      mockPrisma.incident.findUnique.mockResolvedValue({ status: "PROPOSAL_READY" });
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-cb-throw" });
+      vi.spyOn(triageService, "diagnoseIncident").mockResolvedValue({
+        incidentId: "inc-cb-throw",
+        status: "PROPOSAL_READY",
+        proposal: {} as any,
+        proposedPayload: { orderId: "ORD-CB" },
+      });
+      vi.spyOn(validationService, "validateProposal").mockRejectedValue(
+        new Error("Unexpected validator failure")
+      );
+
+      const outcome = await handleHealerJob({ id: "intake-3", data: sampleSnapshot });
+
+      expect(outcome.status).toBe("ANALYSIS_FAILED");
+      expect(circuitBreakerService.canProcess(fp).state).toBe("OPEN");
+      expect(mockPrisma.incident.update).toHaveBeenLastCalledWith({
+        where: { id: "inc-cb-throw" },
+        data: { status: "ANALYSIS_FAILED" },
+      });
+    });
+  });
+
+  describe("apiKeyAuth constant-time header validation", () => {
+    it("accepts valid scalar/array x-api-key and Bearer tokens and rejects mismatches", () => {
+      process.env.TEST_AUTH_ENABLED = "1";
+      process.env.ENGINE_API_KEY = "super_secret_engine_key";
+      const next = vi.fn();
+
+      apiKeyAuth(
+        { path: "/api/incidents", headers: { "x-api-key": "super_secret_engine_key" } } as any,
+        {} as any,
+        next
+      );
+      expect(next).toHaveBeenCalledTimes(1);
+
+      apiKeyAuth(
+        {
+          path: "/api/incidents",
+          headers: { "x-api-key": ["super_secret_engine_key", "ignored"] },
+        } as any,
+        {} as any,
+        next
+      );
+      expect(next).toHaveBeenCalledTimes(2);
+
+      apiKeyAuth(
+        {
+          path: "/api/incidents",
+          headers: { authorization: "Bearer super_secret_engine_key" },
+        } as any,
+        {} as any,
+        next
+      );
+      expect(next).toHaveBeenCalledTimes(3);
+
+      expect(() =>
+        apiKeyAuth(
+          { path: "/api/incidents", headers: { "x-api-key": "wrong" } } as any,
+          {} as any,
+          next
+        )
+      ).toThrowError(/Unauthorized/);
+
+      expect(() =>
+        apiKeyAuth(
+          { path: "/api/incidents", headers: {} } as any,
+          {} as any,
+          next
+        )
+      ).toThrowError(/Unauthorized/);
+
+      apiKeyAuth(
+        { path: "/health", headers: {} } as any,
+        {} as any,
+        next
+      );
+      expect(next).toHaveBeenCalledTimes(4);
     });
   });
 });

@@ -9,7 +9,11 @@ export interface AttachedDLQHealer {
   workerName: string;
   publisher: SmartDLQPublisher;
   detach: () => void;
+  close: () => Promise<void>;
 }
+
+const RECOVERY_JOB_ID_PATTERN =
+  /^recovery-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)?\d+$/i;
 
 /**
  * Attaches DLQ-Healer failure capture hook to an existing BullMQ Worker.
@@ -25,36 +29,57 @@ export function attachDLQHealer(
     config.redisConnection || config.redisUrl
   );
 
-  const failureHandler = async (job: Job | undefined, err: Error) => {
+  const failureHandler = async (job: Job | undefined, err: unknown) => {
     if (!job) return;
 
-    const configuredAttempts = job.opts.attempts || 1;
-    const attemptsMade = job.attemptsMade;
+    const rawJobId =
+      job.id !== undefined && job.id !== null ? String(job.id) : "";
 
-    // ── Critical: Only capture terminal failures (exhausted retries) ──
-    if (attemptsMade < configuredAttempts) {
+    if (!config.captureReplayFailures && RECOVERY_JOB_ID_PATTERN.test(rawJobId)) {
       if (config.enableLogging) {
         console.log(
-          `[DLQ-Healer SDK] Intermediate retry failure for Job #${job.id} (${attemptsMade}/${configuredAttempts}). Skipping capture.`
+          `[DLQ-Healer SDK] Skipping failure capture for replay recovery Job #${rawJobId} (tracked by ReplayResultObserver).`
         );
       }
       return;
     }
 
+    const configuredAttempts = job.opts?.attempts || 1;
+    const attemptsMade = job.attemptsMade ?? 0;
+
+    // ── Critical: Only capture terminal failures (exhausted retries) ──
+    if (attemptsMade < configuredAttempts) {
+      if (config.enableLogging) {
+        console.log(
+          `[DLQ-Healer SDK] Intermediate retry failure for Job #${rawJobId || "unknown"} (${attemptsMade}/${configuredAttempts}). Skipping capture.`
+        );
+      }
+      return;
+    }
+
+    const safeJobId = rawJobId || `${Date.now()}`;
+    const errorMessage =
+      err instanceof Error
+        ? err.message || String(err)
+        : typeof err === "string"
+        ? err
+        : String(err ?? "Unknown error");
+    const stackTrace = err instanceof Error ? err.stack : undefined;
+
     try {
       const sanitizedPayload = redactPayload(job.data, config.redactFields);
-      const idempotencyKey = `${worker.name}:${job.id}:${attemptsMade}`;
+      const idempotencyKey = `${worker.name}:${safeJobId}:${attemptsMade}`;
 
       const snapshot: IncidentSnapshot = {
         idempotencyKey,
         source: config.sourceId,
         queueName: worker.name,
-        jobId: String(job.id),
+        jobId: safeJobId,
         jobName: job.name,
         payloadSnapshot: sanitizedPayload,
         expectedJsonSchema: config.expectedJsonSchema,
-        errorMessage: err.message,
-        stackTrace: err.stack,
+        errorMessage,
+        stackTrace,
         attemptsMade,
         configuredAttempts,
         occurredAt: new Date().toISOString(),
@@ -62,7 +87,7 @@ export function attachDLQHealer(
 
       if (config.enableLogging) {
         console.warn(
-          `[DLQ-Healer SDK] 🚨 Terminal failure detected! Publishing Job #${job.id} to Smart DLQ [${config.intakeQueueName}]...`
+          `[DLQ-Healer SDK] 🚨 Terminal failure detected! Publishing Job #${safeJobId} to Smart DLQ [${config.intakeQueueName}]...`
         );
       }
 
@@ -73,22 +98,30 @@ export function attachDLQHealer(
           `[DLQ-Healer SDK] ✅ Snapshot published successfully (Key: ${idempotencyKey})`
         );
       }
-    } catch (publishErr: any) {
+    } catch (publishErr: unknown) {
+      const publishMsg =
+        publishErr instanceof Error ? publishErr.message : String(publishErr);
       console.error(
-        `[DLQ-Healer SDK] ❌ Failed to publish terminal failure for Job #${job.id}:`,
-        publishErr.message
+        `[DLQ-Healer SDK] ❌ Failed to publish terminal failure for Job #${safeJobId}:`,
+        publishMsg
       );
     }
   };
 
   worker.on("failed", failureHandler);
 
+  const detach = () => {
+    worker.off("failed", failureHandler);
+  };
+
   return {
     attached: true,
     workerName: worker.name,
     publisher,
-    detach: () => {
-      worker.off("failed", failureHandler);
+    detach,
+    close: async () => {
+      detach();
+      await publisher.close();
     },
   };
 }

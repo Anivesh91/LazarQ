@@ -88,4 +88,81 @@ describe("SDK attachDLQHealer hook", () => {
     healer.detach();
     await healer.publisher.close();
   });
+
+  it("should handle missing job.opts and non-Error throwables gracefully", async () => {
+    const mockWorker = new EventEmitter() as any;
+    mockWorker.name = "test-order-queue";
+
+    const healer = attachDLQHealer(mockWorker, {
+      enableLogging: false,
+    });
+
+    const publishSpy = vi
+      .spyOn(healer.publisher, "publish")
+      .mockResolvedValue("key");
+
+    const mockJob = {
+      id: "103",
+      name: "process-order",
+      data: {
+        orderId: "ORD_3",
+        secretApiKey: "sk_live_abc123",
+      },
+      attemptsMade: 1,
+      opts: undefined,
+    };
+
+    mockWorker.emit("failed", mockJob, "Plain string rejection");
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(publishSpy).toHaveBeenCalledOnce();
+    const snapshot = publishSpy.mock.calls[0][0];
+    expect(snapshot.configuredAttempts).toBe(1);
+    expect(snapshot.errorMessage).toBe("Plain string rejection");
+    expect(snapshot.stackTrace).toBeUndefined();
+    expect(snapshot.payloadSnapshot.secretApiKey).toBe("[REDACTED]");
+
+    await healer.close();
+  });
+
+  it("should skip capturing recovery replay jobs by default and allow opt-in via captureReplayFailures", async () => {
+    const mockWorker = new EventEmitter() as any;
+    mockWorker.name = "test-order-queue";
+
+    const defaultHealer = attachDLQHealer(mockWorker, {
+      enableLogging: false,
+    });
+    const defaultPublishSpy = vi
+      .spyOn(defaultHealer.publisher, "publish")
+      .mockResolvedValue("key");
+
+    const replayJob = {
+      id: "recovery-123e4567-e89b-12d3-a456-426614174000-1700000000000",
+      name: "process-order",
+      data: { orderId: "ORD_4" },
+      attemptsMade: 3,
+      opts: { attempts: 3 },
+    };
+
+    mockWorker.emit("failed", replayJob, new Error("Replayed job failed"));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(defaultPublishSpy).not.toHaveBeenCalled();
+    await defaultHealer.close();
+
+    const optInHealer = attachDLQHealer(mockWorker, {
+      enableLogging: false,
+      captureReplayFailures: true,
+    });
+    const optInPublishSpy = vi
+      .spyOn(optInHealer.publisher, "publish")
+      .mockResolvedValue("key");
+
+    mockWorker.emit("failed", replayJob, new Error("Replayed job failed"));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(optInPublishSpy).toHaveBeenCalledOnce();
+    await optInHealer.close();
+  });
 });

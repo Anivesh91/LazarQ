@@ -40,12 +40,15 @@ export interface ValidationStage {
   stage: number;
   name: string;
   passed: boolean;
+  message?: string;
   error?: string;
   details?: Record<string, unknown>;
 }
 
 export interface ValidationResult {
   passed: boolean;
+  failedStage?: number;
+  rejectionReason?: string;
   stages: ValidationStage[];
   failureReason?: string;
 }

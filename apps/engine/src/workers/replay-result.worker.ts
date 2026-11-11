@@ -4,6 +4,7 @@ import { redis } from "../config/redis";
 import { logger } from "../config/logger";
 import { prisma } from "../db/prisma";
 import { eventBroadcaster } from "../services/event-broadcaster.service";
+import { circuitBreakerService } from "../services/circuit-breaker.service";
 
 export class ReplayResultObserver {
   private observers: Map<string, QueueEvents> = new Map();
@@ -174,6 +175,10 @@ export class ReplayResultObserver {
         }),
       ]);
 
+      if (attempt.incident.fingerprint) {
+        circuitBreakerService.recordSuccess(attempt.incident.fingerprint);
+      }
+
       eventBroadcaster.broadcast("incident:resolved", {
         incidentId: attempt.incidentId,
         attemptId: attempt.id,
@@ -271,6 +276,78 @@ export class ReplayResultObserver {
       );
       return false;
     }
+  }
+
+  /**
+   * Re-attaches QueueEvents listeners on Engine startup for any incidents left
+   * in REPLAYING state and reconciles replay jobs that settled during downtime.
+   */
+  public async recoverActiveReplayObservers(): Promise<number> {
+    const activeIncidents = await prisma.incident.findMany({
+      where: { status: "REPLAYING" },
+      include: {
+        recoveryAttempts: {
+          where: { status: { in: ["IN_PROGRESS", "QUEUED"] } },
+          orderBy: { startedAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (activeIncidents.length === 0) {
+      return 0;
+    }
+
+    logger.info(
+      { count: activeIncidents.length },
+      "[Replay Observer] Recovering QueueEvents observers for active REPLAYING incidents"
+    );
+
+    for (const incident of activeIncidents) {
+      this.ensureQueueObserver(incident.queueName);
+      const attempt = incident.recoveryAttempts[0];
+      if (!attempt?.replayJobId) {
+        continue;
+      }
+
+      try {
+        const queue = this.getInspectionQueue(incident.queueName);
+        const job = await queue.getJob(attempt.replayJobId);
+        if (!job) {
+          continue;
+        }
+
+        const state = await job.getState();
+        if (state === "completed") {
+          await this.handleJobCompleted(
+            incident.queueName,
+            attempt.replayJobId,
+            job.returnvalue
+          );
+        } else if (
+          state === "failed" &&
+          (await this.isTerminalFailure(incident.queueName, attempt.replayJobId))
+        ) {
+          await this.handleJobFailed(
+            incident.queueName,
+            attempt.replayJobId,
+            job.failedReason
+          );
+        }
+      } catch (err: any) {
+        logger.warn(
+          {
+            incidentId: incident.id,
+            queueName: incident.queueName,
+            replayJobId: attempt.replayJobId,
+            err: err?.message,
+          },
+          "[Replay Observer] Could not reconcile active replay job state during startup"
+        );
+      }
+    }
+
+    return activeIncidents.length;
   }
 
   /**

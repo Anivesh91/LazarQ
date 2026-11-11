@@ -21,11 +21,24 @@ export default function IncidentsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [queueSearch, setQueueSearch] = useState<string>("");
+  const [debouncedQueueSearch, setDebouncedQueueSearch] = useState<string>("");
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [totalCount, setTotalCount] = useState<number>(0);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const requestController = useRef<AbortController | null>(null);
+  const lastAppliedQueueSearch = useRef<string>("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (lastAppliedQueueSearch.current !== queueSearch) {
+        lastAppliedQueueSearch.current = queueSearch;
+        setPage(1);
+      }
+      setDebouncedQueueSearch(queueSearch);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [queueSearch]);
 
   const loadIncidents = useCallback(async () => {
     requestController.current?.abort();
@@ -36,7 +49,7 @@ export default function IncidentsPage() {
       setLoading(true);
       const data = await api.getIncidents({
         status: statusFilter || undefined,
-        queueName: queueSearch || undefined,
+        queueName: debouncedQueueSearch || undefined,
         page,
         limit: 15,
         signal: controller.signal,
@@ -56,7 +69,7 @@ export default function IncidentsPage() {
         setLoading(false);
       }
     }
-  }, [statusFilter, queueSearch, page]);
+  }, [statusFilter, debouncedQueueSearch, page]);
 
   // Live SSE sync
   const { status: sseStatus } = useSSE(
@@ -138,7 +151,6 @@ export default function IncidentsPage() {
                   value={queueSearch}
                   onChange={(e) => {
                     setQueueSearch(e.target.value);
-                    setPage(1);
                   }}
                   className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
                 />

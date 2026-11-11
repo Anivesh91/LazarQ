@@ -5,8 +5,16 @@ export const DEFAULT_REDACT_FIELDS = [
   "password",
   "pass",
   "token",
+  "accessToken",
+  "access_token",
+  "refreshToken",
+  "refresh_token",
   "apiKey",
   "api_key",
+  "secretApiKey",
+  "secret_api_key",
+  "privateKey",
+  "private_key",
   "secret",
   "authorization",
   "auth",
@@ -24,6 +32,7 @@ export const DLQHealerConfigSchema = z.object({
   redactFields: z.array(z.string()).default([]),
   expectedJsonSchema: z.record(z.any()).optional(),
   enableLogging: z.boolean().default(true),
+  captureReplayFailures: z.boolean().default(false),
 });
 
 export function resolveConfig(userConfig?: DLQHealerConfig) {

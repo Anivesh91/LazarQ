@@ -53,7 +53,7 @@ export class SmartDLQPublisher {
       const job = await this.intakeQueue.add("incident", snapshot, {
         jobId: snapshot.idempotencyKey,
       });
-      return job.id || snapshot.idempotencyKey;
+      return job?.id || snapshot.idempotencyKey;
     } catch (err: any) {
       if (err.message?.includes("Job already exists") || err.message?.includes("duplicate")) {
         return snapshot.idempotencyKey;

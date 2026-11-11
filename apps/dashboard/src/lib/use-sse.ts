@@ -11,9 +11,20 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
   const [eventHistory, setEventHistory] = useState<SSEEvent[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const unmountedRef = useRef<boolean>(false);
+  const onEventRef = useRef<((event: SSEEvent) => void) | undefined>(onEvent);
+
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   const connect = useCallback(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || unmountedRef.current) return;
+
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
 
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -24,10 +35,13 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     eventSourceRef.current = es;
 
     es.onopen = () => {
-      setStatus("connected");
+      if (!unmountedRef.current && eventSourceRef.current === es) {
+        setStatus("connected");
+      }
     };
 
     const handleMessage = (type: string, ev: MessageEvent) => {
+      if (unmountedRef.current) return;
       try {
         const parsed = JSON.parse(ev.data) as Record<string, unknown>;
         const payload: SSEEventPayload =
@@ -50,8 +64,8 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
         setLastEvent(sseEvent);
         setEventHistory((prev) => [sseEvent, ...prev].slice(0, 50)); // keep last 50 events
 
-        if (onEvent) {
-          onEvent(sseEvent);
+        if (onEventRef.current) {
+          onEventRef.current(sseEvent);
         }
       } catch {
         // non-json or ping event
@@ -76,21 +90,52 @@ export function useSSE(onEvent?: (event: SSEEvent) => void) {
     });
 
     es.onerror = () => {
+      if (unmountedRef.current || eventSourceRef.current !== es) return;
+
       setStatus("disconnected");
       es.close();
 
-      // Auto-reconnect after 4 seconds
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = setTimeout(() => {
-        connect();
-      }, 4000);
+      void (async () => {
+        try {
+          const sessionRes = await fetch("/api/operator/session", {
+            cache: "no-store",
+          });
+          if (sessionRes.ok) {
+            const session = (await sessionRes.json()) as {
+              authEnabled?: boolean;
+              authenticated?: boolean;
+            };
+            if (
+              session.authEnabled &&
+              !session.authenticated &&
+              window.location.pathname !== "/login"
+            ) {
+              const next = `${window.location.pathname}${window.location.search}`;
+              window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+              return;
+            }
+          }
+        } catch {
+          // Ignore network probe error and allow standard reconnect backoff
+        }
+
+        if (unmountedRef.current) return;
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (!unmountedRef.current) {
+            connect();
+          }
+        }, 4000);
+      })();
     };
-  }, [onEvent]);
+  }, []);
 
   useEffect(() => {
+    unmountedRef.current = false;
     connect();
 
     return () => {
+      unmountedRef.current = true;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (eventSourceRef.current) eventSourceRef.current.close();
     };

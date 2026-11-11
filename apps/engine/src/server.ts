@@ -15,6 +15,13 @@ const server = app.listen(PORT, () => {
   logger.info(`🚀 LazarQ Engine API running on http://localhost:${PORT}`);
   // Start the background intake consumer worker
   startHealerWorker();
+  // Re-attach replay outcome observers & reconcile any jobs completed during downtime
+  void replayResultObserver.recoverActiveReplayObservers().catch((err) => {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[Startup] Failed to recover active replay observers"
+    );
+  });
 });
 
 // ── Graceful Shutdown ──

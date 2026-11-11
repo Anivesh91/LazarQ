@@ -12,13 +12,31 @@ export interface TriageResult {
   proposedPayload: Record<string, any> | null;
 }
 
-function applyMutation(payload: Record<string, any>, field: string, to: any): void {
+const DISALLOWED_MUTATION_SEGMENTS = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+export function applyMutation(payload: Record<string, any>, field: string, to: any): void {
   if (!field) return;
   const parts = field.split(".");
+  if (parts.some((part) => !part || DISALLOWED_MUTATION_SEGMENTS.has(part))) {
+    throw new AppError(
+      `Unsafe mutation field path rejected: "${field}"`,
+      400,
+      "UNSAFE_MUTATION_PATH"
+    );
+  }
+
   let curr = payload;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
-    if (!(key in curr) || typeof curr[key] !== "object" || curr[key] === null) {
+    if (
+      !Object.prototype.hasOwnProperty.call(curr, key) ||
+      typeof curr[key] !== "object" ||
+      curr[key] === null
+    ) {
       curr[key] = {};
     }
     curr = curr[key];
@@ -40,34 +58,38 @@ export class TriageService {
       throw new AppError(`Incident with id ${incidentId} not found`, 404);
     }
 
-    // Step 1: If not yet RAG matched, attempt RAG retrieval first
-    if (!incident.matchedRunbookId && incident.status === "INGESTED") {
-      logger.info({ incidentId }, "Incident not yet RAG matched; triggering retrieval first");
-      await ragService.matchIncident(incidentId);
+    let inRagStep = false;
 
-      incident = await prisma.incident.findUnique({
-        where: { id: incidentId },
-        include: { matchedRunbook: true },
-      });
-
-      if (!incident) {
-        throw new AppError(`Incident ${incidentId} vanished during triage`, 500);
-      }
-    }
-
-    // If RAG quarantine occurred (no matching runbook), return early
-    if (incident.status === "QUARANTINED") {
-      logger.info({ incidentId }, "Incident already quarantined by RAG gate");
-      return {
-        incidentId,
-        status: "QUARANTINED",
-        proposal: null,
-        proposedPayload: null,
-      };
-    }
-
-    // Step 2: Request structured repair proposal from LLM Doctor
     try {
+      // Step 1: If not yet RAG matched, attempt RAG retrieval first
+      if (!incident.matchedRunbookId && incident.status === "INGESTED") {
+        logger.info({ incidentId }, "Incident not yet RAG matched; triggering retrieval first");
+        inRagStep = true;
+        await ragService.matchIncident(incidentId);
+        inRagStep = false;
+
+        incident = await prisma.incident.findUnique({
+          where: { id: incidentId },
+          include: { matchedRunbook: true },
+        });
+
+        if (!incident) {
+          throw new AppError(`Incident ${incidentId} vanished during triage`, 500);
+        }
+      }
+
+      // If RAG quarantine occurred (no matching runbook), return early
+      if (incident.status === "QUARANTINED") {
+        logger.info({ incidentId }, "Incident already quarantined by RAG gate");
+        return {
+          incidentId,
+          status: "QUARANTINED",
+          proposal: null,
+          proposedPayload: null,
+        };
+      }
+
+      // Step 2: Request structured repair proposal from LLM Doctor
       const proposal = await llmService.generateRepairProposal({
         jobName: incident.jobName,
         queueName: incident.queueName,
@@ -154,24 +176,42 @@ export class TriageService {
       };
     } catch (llmError: any) {
       logger.error(
-        { incidentId, err: llmError.message },
-        "LLM diagnosis failed; transitioning incident to ANALYSIS_FAILED"
+        { incidentId, err: llmError?.message },
+        "Triage/RAG diagnosis failed; transitioning incident to ANALYSIS_FAILED"
       );
 
-      await prisma.$transaction([
-        prisma.incident.update({
-          where: { id: incidentId },
-          data: { status: "ANALYSIS_FAILED" },
-        }),
-        prisma.auditLog.create({
-          data: {
-            incidentId,
-            action: "ANALYSIS_FAILED",
-            actor: "ai-doctor",
-            details: { error: llmError.message },
-          },
-        }),
-      ]);
+      const currentStatus = inRagStep
+        ? await prisma.incident
+            .findUnique({
+              where: { id: incidentId },
+              select: { status: true },
+            })
+            .then((row) => row?.status)
+            .catch(() => null)
+        : null;
+
+      if (currentStatus !== "ANALYSIS_FAILED") {
+        await prisma.$transaction([
+          prisma.incident.update({
+            where: { id: incidentId },
+            data: { status: "ANALYSIS_FAILED" },
+          }),
+          prisma.auditLog.create({
+            data: {
+              incidentId,
+              action: "ANALYSIS_FAILED",
+              actor: inRagStep ? "system/rag" : "ai-doctor",
+              details: { error: llmError?.message || "Unknown analysis error" },
+            },
+          }),
+        ]);
+      }
+
+      eventBroadcaster.broadcast("incident:failed", {
+        incidentId,
+        status: "ANALYSIS_FAILED",
+        error: llmError?.message || "Unknown analysis error",
+      });
 
       return {
         incidentId,
